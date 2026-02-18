@@ -1,0 +1,14 @@
+{
+  "name": "carbobo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "UK Car Health Coach + Fuel Saver",
+  "scripts": {
+    "dev": "pnpm --filter frontend dev & pnpm --filter backend dev",
+    "build": "pnpm --filter frontend build && pnpm --filter backend build",
+    "install:all": "pnpm install"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
+}
