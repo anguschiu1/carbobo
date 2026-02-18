@@ -27,25 +27,24 @@ router.post('/register', async (req, res) => {
     const passwordHash = await bcrypt.hash(password, 10)
     const userId = uuidv4()
 
-    // Create user
-    db.prepare('INSERT INTO users (id, email, password_hash) VALUES (?, ?, ?)').run(
+    const now = new Date().toISOString()
+    db.prepare('INSERT INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)').run(
       userId,
       email,
-      passwordHash
+      passwordHash,
+      now
     )
 
-    // Generate token
     const jwtSecret = process.env.JWT_SECRET || 'your-secret-key-change-in-production'
     const expiresIn = process.env.JWT_EXPIRES_IN || '7d'
-    const token = jwt.sign({ userId }, jwtSecret, {
-      expiresIn: expiresIn as string,
-    })
+    const token = jwt.sign({ userId }, jwtSecret, { expiresIn } as jwt.SignOptions)
 
     res.status(201).json({
       token,
       user: {
         id: userId,
         email,
+        created_at: now,
       },
     })
   } catch (error) {
@@ -68,6 +67,7 @@ router.post('/login', async (req, res) => {
       id: string
       email: string
       password_hash: string
+      created_at: string
     } | undefined
 
     if (!user) {
@@ -83,15 +83,14 @@ router.post('/login', async (req, res) => {
     // Generate token
     const jwtSecret = process.env.JWT_SECRET || 'your-secret-key-change-in-production'
     const expiresIn = process.env.JWT_EXPIRES_IN || '7d'
-    const token = jwt.sign({ userId: user.id }, jwtSecret, {
-      expiresIn: expiresIn as string,
-    })
+    const token = jwt.sign({ userId: user.id }, jwtSecret, { expiresIn } as jwt.SignOptions)
 
     res.json({
       token,
       user: {
         id: user.id,
         email: user.email,
+        created_at: user.created_at,
       },
     })
   } catch (error) {

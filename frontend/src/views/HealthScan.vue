@@ -175,7 +175,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import apiClient from '@/api/client'
 import { useVehiclesStore } from '@/stores/vehicles'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -187,7 +187,6 @@ import { format } from 'date-fns'
 import type { HealthScan } from '@carbobo/shared'
 
 const route = useRoute()
-const router = useRouter()
 const vehiclesStore = useVehiclesStore()
 
 const vehicleId = route.params.vehicleId as string

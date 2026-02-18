@@ -32,10 +32,10 @@ export const useAuthStore = defineStore('auth', () => {
       localStorage.setItem('token', response.data.token)
       return { success: true }
     } catch (error: any) {
-      return {
-        success: false,
-        error: error.response?.data?.error || 'Registration failed',
-      }
+      const message =
+        error.response?.data?.error ||
+        (error.code === 'ERR_NETWORK' ? 'Cannot reach server. Is the backend running?' : 'Registration failed')
+      return { success: false, error: message }
     }
   }
 

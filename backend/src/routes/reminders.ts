@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../db/index.js'
+import { param } from '../utils/params.js'
 import { authenticateToken, type AuthRequest } from '../middleware/auth.js'
 import type { Reminder } from '@carbobo/shared'
 
@@ -22,7 +23,7 @@ function verifyVehicleOwnership(userId: string, vehicleId: string): boolean {
 router.post('/:vehicleId/reminders', (req: AuthRequest, res) => {
   try {
     const userId = req.userId!
-    const vehicleId = req.params.vehicleId
+    const vehicleId = param(req, 'vehicleId')
 
     if (!verifyVehicleOwnership(userId, vehicleId)) {
       return res.status(404).json({ error: 'Vehicle not found' })
@@ -61,7 +62,7 @@ router.post('/:vehicleId/reminders', (req: AuthRequest, res) => {
 router.get('/:vehicleId/reminders', (req: AuthRequest, res) => {
   try {
     const userId = req.userId!
-    const vehicleId = req.params.vehicleId
+    const vehicleId = param(req, 'vehicleId')
 
     if (!verifyVehicleOwnership(userId, vehicleId)) {
       return res.status(404).json({ error: 'Vehicle not found' })
@@ -116,7 +117,7 @@ router.get('/reminders/upcoming', (req: AuthRequest, res) => {
 router.put('/reminders/:id', (req: AuthRequest, res) => {
   try {
     const userId = req.userId!
-    const reminderId = req.params.id
+    const reminderId = param(req, 'id')
 
     // Verify ownership through vehicle
     const reminder = db
@@ -177,7 +178,7 @@ router.put('/reminders/:id', (req: AuthRequest, res) => {
 router.delete('/reminders/:id', (req: AuthRequest, res) => {
   try {
     const userId = req.userId!
-    const reminderId = req.params.id
+    const reminderId = param(req, 'id')
 
     // Verify ownership through vehicle
     const reminder = db

@@ -23,7 +23,6 @@ const route = useRoute()
 
 const navItems = computed(() => {
   const vehicleId = route.params.vehicleId as string | undefined
-  const basePath = vehicleId ? `/vehicles/${vehicleId}` : '/'
 
   return [
     { path: '/', label: 'Home', icon: '🏠' },

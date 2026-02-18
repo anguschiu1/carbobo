@@ -147,7 +147,6 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import apiClient from '@/api/client'
 import { format } from 'date-fns'
 import { useVehiclesStore } from '@/stores/vehicles'
@@ -157,7 +156,6 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 
-const router = useRouter()
 const vehiclesStore = useVehiclesStore()
 
 const selectedVehicleId = ref<string | null>(null)
@@ -166,7 +164,7 @@ const upcomingReminders = ref<Reminder[]>([])
 
 const selectedVehicle = computed(() => {
   if (!selectedVehicleId.value) return null
-  return vehiclesStore.vehicles.find((v) => v.id === selectedVehicleId.value)
+  return vehiclesStore.vehicles.find((v: { id: string }) => v.id === selectedVehicleId.value)
 })
 
 function getReminderTypeLabel(type: ReminderType): string {
@@ -204,8 +202,9 @@ async function loadVehicleData() {
 
 onMounted(async () => {
   await vehiclesStore.fetchVehicles()
-  if (vehiclesStore.vehicles.length > 0) {
-    selectedVehicleId.value = vehiclesStore.vehicles[0].id
+  const first = vehiclesStore.vehicles[0]
+  if (first) {
+    selectedVehicleId.value = first.id
     await loadVehicleData()
   }
 })

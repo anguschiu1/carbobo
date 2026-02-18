@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../db/index.js'
+import { param } from '../utils/params.js'
 import { authenticateToken, type AuthRequest } from '../middleware/auth.js'
 import { uploadHealthScanPhotos, getFileUrl } from '../utils/fileUpload.js'
 import { generateHealthScanAdvice } from '../services/healthScanAdvice.js'
@@ -31,7 +32,7 @@ router.post(
   (req: AuthRequest, res) => {
     try {
       const userId = req.userId!
-      const vehicleId = req.params.vehicleId
+      const vehicleId = param(req, 'vehicleId')
 
       if (!verifyVehicleOwnership(userId, vehicleId)) {
         return res.status(404).json({ error: 'Vehicle not found' })
@@ -115,7 +116,7 @@ router.post(
 router.get('/:vehicleId/health-scans', (req: AuthRequest, res) => {
   try {
     const userId = req.userId!
-    const vehicleId = req.params.vehicleId
+    const vehicleId = param(req, 'vehicleId')
 
     if (!verifyVehicleOwnership(userId, vehicleId)) {
       return res.status(404).json({ error: 'Vehicle not found' })
@@ -142,8 +143,8 @@ router.get('/:vehicleId/health-scans', (req: AuthRequest, res) => {
 router.get('/:vehicleId/health-scans/:scanId', (req: AuthRequest, res) => {
   try {
     const userId = req.userId!
-    const vehicleId = req.params.vehicleId
-    const scanId = req.params.scanId
+    const vehicleId = param(req, 'vehicleId')
+    const scanId = param(req, 'scanId')
 
     if (!verifyVehicleOwnership(userId, vehicleId)) {
       return res.status(404).json({ error: 'Vehicle not found' })

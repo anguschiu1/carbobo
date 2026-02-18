@@ -51,8 +51,7 @@
       <Card
         v-for="reminder in reminders"
         :key="reminder.id"
-        class="p-4"
-        :class="{ 'opacity-60': reminder.is_completed }"
+        :class="`p-4 ${reminder.is_completed ? 'opacity-60' : ''}`"
       >
         <div class="flex justify-between items-start">
           <div class="flex-1">

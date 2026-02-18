@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../db/index.js'
 import { authenticateToken, type AuthRequest } from '../middleware/auth.js'
 import { uploadDocument, getFileUrl } from '../utils/fileUpload.js'
+import { param } from '../utils/params.js'
 import type { Document } from '@carbobo/shared'
 
 const router = Router()
@@ -23,7 +24,7 @@ function verifyVehicleOwnership(userId: string, vehicleId: string): boolean {
 router.post('/:vehicleId/documents', uploadDocument.single('file'), (req: AuthRequest, res) => {
   try {
     const userId = req.userId!
-    const vehicleId = req.params.vehicleId
+    const vehicleId = param(req, 'vehicleId')
 
     if (!verifyVehicleOwnership(userId, vehicleId)) {
       return res.status(404).json({ error: 'Vehicle not found' })
@@ -63,7 +64,7 @@ router.post('/:vehicleId/documents', uploadDocument.single('file'), (req: AuthRe
 router.get('/:vehicleId/documents', (req: AuthRequest, res) => {
   try {
     const userId = req.userId!
-    const vehicleId = req.params.vehicleId
+    const vehicleId = param(req, 'vehicleId')
 
     if (!verifyVehicleOwnership(userId, vehicleId)) {
       return res.status(404).json({ error: 'Vehicle not found' })
@@ -84,8 +85,8 @@ router.get('/:vehicleId/documents', (req: AuthRequest, res) => {
 router.get('/:vehicleId/documents/:docId', (req: AuthRequest, res) => {
   try {
     const userId = req.userId!
-    const vehicleId = req.params.vehicleId
-    const docId = req.params.docId
+    const vehicleId = param(req, 'vehicleId')
+    const docId = param(req, 'docId')
 
     if (!verifyVehicleOwnership(userId, vehicleId)) {
       return res.status(404).json({ error: 'Vehicle not found' })
@@ -111,8 +112,8 @@ router.get('/:vehicleId/documents/:docId', (req: AuthRequest, res) => {
 router.delete('/:vehicleId/documents/:docId', (req: AuthRequest, res) => {
   try {
     const userId = req.userId!
-    const vehicleId = req.params.vehicleId
-    const docId = req.params.docId
+    const vehicleId = param(req, 'vehicleId')
+    const docId = param(req, 'docId')
 
     if (!verifyVehicleOwnership(userId, vehicleId)) {
       return res.status(404).json({ error: 'Vehicle not found' })

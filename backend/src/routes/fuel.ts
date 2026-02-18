@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../db/index.js'
 import { authenticateToken, type AuthRequest } from '../middleware/auth.js'
+import { param } from '../utils/params.js'
 import { calculateFuelStats, validateFuelEntry, calculateFuelIntervals } from '../services/fuelCalculations.js'
 import type { FuelEntry } from '@carbobo/shared'
 
@@ -23,7 +24,7 @@ function verifyVehicleOwnership(userId: string, vehicleId: string): boolean {
 router.post('/:vehicleId/fuel', (req: AuthRequest, res) => {
   try {
     const userId = req.userId!
-    const vehicleId = req.params.vehicleId
+    const vehicleId = param(req, 'vehicleId')
 
     if (!verifyVehicleOwnership(userId, vehicleId)) {
       return res.status(404).json({ error: 'Vehicle not found' })
@@ -59,7 +60,7 @@ router.post('/:vehicleId/fuel', (req: AuthRequest, res) => {
       odometer_reading,
       odometer_unit: odometer_unit || vehicle.odometer_unit_default,
       litres_added,
-      is_full_tank: is_full_tank ? 1 : 0,
+      is_full_tank: Boolean(is_full_tank),
       total_cost_gbp,
       price_pence_per_litre,
       fuel_type: fuel_type || vehicle.fuel_type_default,
@@ -113,7 +114,7 @@ router.post('/:vehicleId/fuel', (req: AuthRequest, res) => {
 router.get('/:vehicleId/fuel', (req: AuthRequest, res) => {
   try {
     const userId = req.userId!
-    const vehicleId = req.params.vehicleId
+    const vehicleId = param(req, 'vehicleId')
 
     if (!verifyVehicleOwnership(userId, vehicleId)) {
       return res.status(404).json({ error: 'Vehicle not found' })
@@ -140,7 +141,7 @@ router.get('/:vehicleId/fuel', (req: AuthRequest, res) => {
 router.get('/:vehicleId/fuel/stats', (req: AuthRequest, res) => {
   try {
     const userId = req.userId!
-    const vehicleId = req.params.vehicleId
+    const vehicleId = param(req, 'vehicleId')
 
     if (!verifyVehicleOwnership(userId, vehicleId)) {
       return res.status(404).json({ error: 'Vehicle not found' })
@@ -170,8 +171,8 @@ router.get('/:vehicleId/fuel/stats', (req: AuthRequest, res) => {
 router.put('/:vehicleId/fuel/:entryId', (req: AuthRequest, res) => {
   try {
     const userId = req.userId!
-    const vehicleId = req.params.vehicleId
-    const entryId = req.params.entryId
+    const vehicleId = param(req, 'vehicleId')
+    const entryId = param(req, 'entryId')
 
     if (!verifyVehicleOwnership(userId, vehicleId)) {
       return res.status(404).json({ error: 'Vehicle not found' })
@@ -242,8 +243,8 @@ router.put('/:vehicleId/fuel/:entryId', (req: AuthRequest, res) => {
 router.delete('/:vehicleId/fuel/:entryId', (req: AuthRequest, res) => {
   try {
     const userId = req.userId!
-    const vehicleId = req.params.vehicleId
-    const entryId = req.params.entryId
+    const vehicleId = param(req, 'vehicleId')
+    const entryId = param(req, 'entryId')
 
     if (!verifyVehicleOwnership(userId, vehicleId)) {
       return res.status(404).json({ error: 'Vehicle not found' })

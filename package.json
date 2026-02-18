@@ -4,11 +4,21 @@
   "private": true,
   "description": "UK Car Health Coach + Fuel Saver",
   "scripts": {
+    "clean": "rm -rf node_modules frontend/node_modules backend/node_modules shared/node_modules frontend/dist backend/dist shared/dist frontend/.vite frontend/coverage",
+    "clean:all": "pnpm run clean",
+    "rebuild": "pnpm run clean && pnpm install && pnpm build",
+    "clean-rebuild": "pnpm run rebuild",
     "dev": "pnpm --filter frontend dev & pnpm --filter backend dev",
-    "build": "pnpm --filter frontend build && pnpm --filter backend build",
+    "build": "pnpm --filter @carbobo/shared build && pnpm --filter frontend build && pnpm --filter backend build",
     "install:all": "pnpm install"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "bcrypt",
+      "better-sqlite3"
+    ]
+  },
   "devDependencies": {
-    "typescript": "^5.3.3"
+    "typescript": "^5.9.3"
   }
 }
