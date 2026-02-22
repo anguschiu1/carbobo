@@ -43,34 +43,34 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { useAuthStore } from '@/stores/auth'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Button } from '@/components/ui/button'
+import { ref } from 'vue';
+import { useRouter } from 'vue-router';
+import { useAuthStore } from '@/stores/auth';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Button } from '@/components/ui/button';
 
-const router = useRouter()
-const authStore = useAuthStore()
+const router = useRouter();
+const authStore = useAuthStore();
 
-const email = ref('')
-const password = ref('')
-const error = ref('')
-const loading = ref(false)
+const email = ref('');
+const password = ref('');
+const error = ref('');
+const loading = ref(false);
 
 async function handleLogin() {
-  error.value = ''
-  loading.value = true
+  error.value = '';
+  loading.value = true;
 
-  const result = await authStore.login(email.value, password.value)
+  const result = await authStore.login(email.value, password.value);
 
   if (result.success) {
-    router.push('/')
+    router.push('/');
   } else {
-    error.value = result.error || 'Login failed'
+    error.value = result.error || 'Login failed';
   }
 
-  loading.value = false
+  loading.value = false;
 }
 </script>

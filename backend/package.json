@@ -12,30 +12,30 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "express": "^5.2.1",
-    "cors": "^2.8.5",
-    "helmet": "^8.1.0",
-    "jsonwebtoken": "^9.0.2",
     "bcrypt": "^6.0.0",
-    "better-sqlite3": "^12.1.0",
-    "multer": "^2.0.2",
-    "express-validator": "^7.0.1",
+    "better-sqlite3": "^12.6.2",
+    "cors": "^2.8.6",
     "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "express-validator": "^7.3.1",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.0.2",
     "uuid": "^13.0.0"
   },
   "devDependencies": {
-    "@types/express": "^5.0.6",
-    "@types/cors": "^2.8.19",
-    "@types/jsonwebtoken": "^9.0.10",
     "@types/bcrypt": "^6.0.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.0.0",
-    "@types/node": "^25.2.3",
-    "@types/uuid": "^10.0.0",
-    "@types/better-sqlite3": "^7.6.11",
-    "tsx": "^4.7.1",
+    "@types/node": "^25.3.1",
+    "@types/supertest": "^7.2.0",
+    "@types/uuid": "^11.0.0",
+    "supertest": "^7.2.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.18",
-    "supertest": "^7.0.0",
-    "@types/supertest": "^6.0.2"
+    "vitest": "^4.0.18"
   }
 }

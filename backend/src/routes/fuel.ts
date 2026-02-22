@@ -76,6 +76,10 @@ router.post('/:vehicleId/fuel', (req: AuthRequest, res) => {
     const entryId = uuidv4()
     const now = new Date().toISOString()
 
+    // better-sqlite3 only binds number, string, bigint, buffer, null (no boolean/undefined)
+    const isFullTank = entry.is_full_tank ? 1 : 0
+    const townPct = Number.isFinite(entry.town_pct) ? entry.town_pct! : 0
+
     db.prepare(
       `INSERT INTO fuel_entries (
         id, vehicle_id, occurred_at, odometer_reading, odometer_unit,
@@ -85,16 +89,16 @@ router.post('/:vehicleId/fuel', (req: AuthRequest, res) => {
     ).run(
       entryId,
       vehicleId,
-      entry.occurred_at,
-      entry.odometer_reading,
-      entry.odometer_unit,
-      entry.litres_added,
-      entry.is_full_tank,
-      entry.total_cost_gbp,
-      entry.price_pence_per_litre,
-      entry.fuel_type,
-      entry.town_pct,
-      entry.notes || null,
+      entry.occurred_at!,
+      Number(entry.odometer_reading),
+      entry.odometer_unit!,
+      Number(entry.litres_added),
+      isFullTank,
+      Number(entry.total_cost_gbp),
+      Number(entry.price_pence_per_litre),
+      entry.fuel_type!,
+      townPct,
+      entry.notes ?? null,
       now
     )
 
