@@ -2,7 +2,9 @@
   <div class="container mx-auto p-4 max-w-2xl">
     <Card>
       <CardHeader>
-        <CardTitle>{{ entryId ? 'Edit Fuel Entry' : 'Add Fuel Entry' }}</CardTitle>
+        <CardTitle>{{
+          entryId ? 'Edit Fuel Entry' : 'Add Fuel Entry'
+        }}</CardTitle>
       </CardHeader>
       <CardContent>
         <form @submit.prevent="handleSubmit" class="space-y-4">
@@ -22,11 +24,20 @@
               v-model.number="form.odometer_reading"
               type="number"
               step="0.1"
-              :placeholder="vehicle?.odometer_unit_default === 'miles' ? 'Miles' : 'Kilometers'"
+              :placeholder="
+                vehicle?.odometer_unit_default === 'miles'
+                  ? 'Miles'
+                  : 'Kilometers'
+              "
               required
             />
             <p class="text-xs text-muted-foreground">
-              Unit: {{ vehicle?.odometer_unit_default === 'miles' ? 'Miles' : 'Kilometers' }}
+              Unit:
+              {{
+                vehicle?.odometer_unit_default === 'miles'
+                  ? 'Miles'
+                  : 'Kilometers'
+              }}
             </p>
           </div>
           <div class="grid grid-cols-2 gap-4">
@@ -75,7 +86,10 @@
               />
             </div>
           </div>
-          <div v-if="costWarning" class="text-sm text-destructive bg-destructive/10 p-2 rounded">
+          <div
+            v-if="costWarning"
+            class="text-sm text-destructive bg-destructive/10 p-2 rounded"
+          >
             {{ costWarning }}
           </div>
           <div class="space-y-2">
@@ -88,7 +102,9 @@
             </p>
           </div>
           <div class="space-y-2">
-            <Label for="town_pct">Town Driving Percentage: {{ form.town_pct }}%</Label>
+            <Label for="town_pct"
+              >Town Driving Percentage: {{ form.town_pct }}%</Label
+            >
             <Slider
               id="town_pct"
               v-model="form.town_pct"
@@ -103,14 +119,20 @@
           </div>
           <div class="space-y-2">
             <Label for="notes">Notes (Optional)</Label>
-            <Input id="notes" v-model="form.notes" placeholder="Any additional notes..." />
+            <Input
+              id="notes"
+              v-model="form.notes"
+              placeholder="Any additional notes..."
+            />
           </div>
           <div v-if="error" class="text-sm text-destructive">{{ error }}</div>
           <div class="flex gap-2">
             <Button type="submit" :disabled="loading">
               {{ loading ? 'Saving...' : 'Save' }}
             </Button>
-            <Button type="button" variant="outline" @click="$router.back()">Cancel</Button>
+            <Button type="button" variant="outline" @click="$router.back()"
+              >Cancel</Button
+            >
           </div>
         </form>
       </CardContent>
@@ -119,40 +141,41 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import apiClient from '@/api/client'
-import { useVehiclesStore } from '@/stores/vehicles'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Select } from '@/components/ui/select'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Slider } from '@/components/ui/slider'
-import { Button } from '@/components/ui/button'
-import type { FuelEntry, FuelType } from '@carbobo/shared'
-import { format } from 'date-fns'
+import { ref, onMounted } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { watchDebounced } from '@vueuse/core';
+import apiClient from '@/api/client';
+import { useVehiclesStore } from '@/stores/vehicles';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Slider } from '@/components/ui/slider';
+import { Button } from '@/components/ui/button';
+import type { FuelEntry, FuelType } from '@carbobo/shared';
+import { format } from 'date-fns';
 
-const route = useRoute()
-const router = useRouter()
-const vehiclesStore = useVehiclesStore()
+const route = useRoute();
+const router = useRouter();
+const vehiclesStore = useVehiclesStore();
 
-const vehicleId = route.params.vehicleId as string
-const entryId = route.params.entryId as string | undefined
-const loading = ref(false)
-const error = ref('')
-const vehicle = ref<any>(null)
+const vehicleId = route.params.vehicleId as string;
+const entryId = route.params.entryId as string | undefined;
+const loading = ref(false);
+const error = ref('');
+const vehicle = ref<any>(null);
 
 const form = ref<{
-  occurred_at: string
-  odometer_reading: number | null
-  litres_added: number | null
-  is_full_tank: boolean
-  total_cost_gbp: number | null
-  price_pence_per_litre: number | null
-  fuel_type: FuelType
-  town_pct: number
-  notes?: string
+  occurred_at: string;
+  odometer_reading: number | null;
+  litres_added: number | null;
+  is_full_tank: boolean;
+  total_cost_gbp: number | null;
+  price_pence_per_litre: number | null;
+  fuel_type: FuelType;
+  town_pct: number;
+  notes?: string;
 }>({
   occurred_at: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
   odometer_reading: null,
@@ -163,39 +186,64 @@ const form = ref<{
   fuel_type: 'petrol',
   town_pct: 50,
   notes: '',
-})
+});
 
-const costWarning = computed(() => {
-  if (
-    form.value.total_cost_gbp &&
-    form.value.price_pence_per_litre &&
-    form.value.litres_added
-  ) {
-    const expectedCost = (form.value.price_pence_per_litre * form.value.litres_added) / 100
-    const tolerance = 0.5
-    if (Math.abs(form.value.total_cost_gbp - expectedCost) > tolerance) {
-      return `Cost (£${form.value.total_cost_gbp.toFixed(2)}) doesn't match price (£${expectedCost.toFixed(2)}). Please verify.`
+const costWarning = ref<string | null>(null);
+
+function syncFuelDerivedFields() {
+  const f = form.value;
+  const total = f.total_cost_gbp;
+  const pencePerL = f.price_pence_per_litre;
+  const litresAdded = f.litres_added;
+  costWarning.value = null;
+
+  if (!total && pencePerL && litresAdded) {
+    f.total_cost_gbp = (pencePerL * litresAdded) / 100;
+  }
+  if (!pencePerL && total && litresAdded) {
+    f.price_pence_per_litre =
+      Math.round(((total * 100) / litresAdded) * 10) / 10;
+  }
+  if (!litresAdded && total && pencePerL) {
+    f.litres_added = Math.round(((total * 100) / pencePerL) * 100) / 100;
+  }
+
+  if (total && pencePerL && litresAdded) {
+    const expectedCost = (pencePerL * litresAdded) / 100;
+    const tolerance = 0.5;
+    if (Math.abs(total - expectedCost) > tolerance) {
+      costWarning.value = `Cost (£${total.toFixed(2)}) doesn't match price (£${expectedCost.toFixed(2)}). Please verify.`;
     }
   }
-  return null
-})
+}
+
+watchDebounced(form, syncFuelDerivedFields, {
+  deep: true,
+  debounce: 300,
+  maxWait: 800,
+});
 
 onMounted(async () => {
   // Fetch vehicle
-  const vehicleResult = await vehiclesStore.fetchVehicle(vehicleId)
+  const vehicleResult = await vehiclesStore.fetchVehicle(vehicleId);
   if (vehicleResult.success && vehicleResult.vehicle) {
-    vehicle.value = vehicleResult.vehicle
-    form.value.fuel_type = vehicleResult.vehicle.fuel_type_default
+    vehicle.value = vehicleResult.vehicle;
+    form.value.fuel_type = vehicleResult.vehicle.fuel_type_default;
   }
 
   // If editing, fetch entry
   if (entryId) {
     try {
-      const response = await apiClient.get(`/vehicles/${vehicleId}/fuel`)
-      const entry = response.data.entries.find((e: FuelEntry) => e.id === entryId)
+      const response = await apiClient.get(`/vehicles/${vehicleId}/fuel`);
+      const entry = response.data.entries.find(
+        (e: FuelEntry) => e.id === entryId,
+      );
       if (entry) {
         form.value = {
-          occurred_at: format(new Date(entry.occurred_at), "yyyy-MM-dd'T'HH:mm"),
+          occurred_at: format(
+            new Date(entry.occurred_at),
+            "yyyy-MM-dd'T'HH:mm",
+          ),
           odometer_reading: entry.odometer_reading,
           litres_added: entry.litres_added,
           is_full_tank: entry.is_full_tank,
@@ -204,45 +252,45 @@ onMounted(async () => {
           fuel_type: entry.fuel_type,
           town_pct: entry.town_pct,
           notes: entry.notes || '',
-        }
+        };
       }
     } catch (err) {
-      console.error('Failed to fetch fuel entry:', err)
+      console.error('Failed to fetch fuel entry:', err);
     }
   }
-})
+});
 
 async function handleSubmit() {
-  error.value = ''
-  loading.value = true
+  error.value = '';
+  loading.value = true;
 
   try {
     const payload = {
       ...form.value,
       occurred_at: new Date(form.value.occurred_at).toISOString(),
-    }
+    };
 
     const url = entryId
       ? `/vehicles/${vehicleId}/fuel/${entryId}`
-      : `/vehicles/${vehicleId}/fuel`
+      : `/vehicles/${vehicleId}/fuel`;
 
-    const method = entryId ? 'put' : 'post'
+    const method = entryId ? 'put' : 'post';
 
-    const response = await apiClient[method](url, payload)
+    const response = await apiClient[method](url, payload);
 
     if (response.data.warning) {
       // Show warning but still proceed
-      error.value = response.data.warning
+      error.value = response.data.warning;
       setTimeout(() => {
-        router.push(`/vehicles/${vehicleId}/fuel`)
-      }, 2000)
+        router.push(`/vehicles/${vehicleId}/fuel`);
+      }, 2000);
     } else {
-      router.push(`/vehicles/${vehicleId}/fuel`)
+      router.push(`/vehicles/${vehicleId}/fuel`);
     }
   } catch (err: any) {
-    error.value = err.response?.data?.error || 'Failed to save fuel entry'
+    error.value = err.response?.data?.error || 'Failed to save fuel entry';
   } finally {
-    loading.value = false
+    loading.value = false;
   }
 }
 </script>
