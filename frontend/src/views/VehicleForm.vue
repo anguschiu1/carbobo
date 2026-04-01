@@ -21,11 +21,11 @@
               <Label for="year">Year</Label>
               <Input
                 id="year"
-                v-model.number="form.year"
-                type="number"
-                :min="1900"
-                :max="new Date().getFullYear() + 1"
-                placeholder="2020"
+                v-model="yearInput"
+                type="date"
+                :min="'1900-01-01'"
+                :max="`${new Date().getFullYear() + 1}-12-31`"
+                placeholder="2020-01-01"
               />
             </div>
             <div class="space-y-2">
@@ -65,7 +65,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useVehiclesStore } from '@/stores/vehicles'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -95,6 +95,8 @@ const form = ref<{
   odometer_unit_default: 'miles',
 })
 
+const yearInput = ref<string | null>(null)
+
 onMounted(async () => {
   if (vehicleId) {
     const result = await vehiclesStore.fetchVehicle(vehicleId)
@@ -107,7 +109,21 @@ onMounted(async () => {
         fuel_type_default: result.vehicle.fuel_type_default,
         odometer_unit_default: result.vehicle.odometer_unit_default,
       }
+      if (result.vehicle.year) {
+        yearInput.value = `${result.vehicle.year}-01-01`
+      }
     }
+  }
+})
+
+watch(yearInput, (val) => {
+  if (!val) {
+    form.value.year = undefined
+    return
+  }
+  const year = Number(val.slice(0, 4))
+  if (!Number.isNaN(year)) {
+    form.value.year = year
   }
 })
 

@@ -2,7 +2,13 @@
   <div class="min-h-screen bg-background">
     <div class="container mx-auto p-4 space-y-6">
       <div class="flex justify-between items-center">
-        <h1 class="text-3xl font-bold">Dashboard</h1>
+        <h1 class="text-3xl font-bold">
+          {{
+            selectedVehicle
+              ? `${selectedVehicle.make || 'Unknown'} ${selectedVehicle.model || ''}`
+              : 'Dashboard'
+          }}
+        </h1>
         <div v-if="vehiclesStore.vehicles.length > 0">
           <Button @click="$router.push('/vehicles/new')">Add Vehicle</Button>
         </div>
@@ -23,23 +29,27 @@
       </div>
 
       <div v-else class="space-y-6">
-        <!-- Vehicle Selector -->
-        <div v-if="vehiclesStore.vehicles.length > 1" class="space-y-2">
-          <Label for="vehicle-select">Select Vehicle</Label>
-          <Select
-            id="vehicle-select"
-            v-model="selectedVehicleId"
-            @change="loadVehicleData"
-          >
-            <option
+        <!-- Vehicles List -->
+        <div>
+          <h2 class="text-xl font-semibold mb-4">Your Vehicles</h2>
+          <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <Card
               v-for="vehicle in vehiclesStore.vehicles"
               :key="vehicle.id"
-              :value="vehicle.id"
+              class="p-4 cursor-pointer hover:shadow-md transition-shadow"
+              @click="selectVehicle(vehicle.id)"
             >
-              {{ vehicle.make || 'Unknown' }} {{ vehicle.model || '' }}
-              {{ vehicle.year || '' }}
-            </option>
-          </Select>
+              <h2 class="text-xl font-semibold">
+                {{ vehicle.make || 'Unknown' }} {{ vehicle.model || '' }}
+              </h2>
+              <p class="text-sm text-muted-foreground">
+                {{ vehicle.year || 'N/A' }}
+              </p>
+              <p v-if="vehicle.vrm" class="text-xs text-muted-foreground mt-1">
+                {{ vehicle.vrm }}
+              </p>
+            </Card>
+          </div>
         </div>
 
         <!-- Widgets -->
@@ -166,28 +176,6 @@
           </div>
         </Card>
 
-        <!-- Vehicles List -->
-        <div>
-          <h2 class="text-xl font-semibold mb-4">Your Vehicles</h2>
-          <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            <Card
-              v-for="vehicle in vehiclesStore.vehicles"
-              :key="vehicle.id"
-              class="p-4 cursor-pointer hover:shadow-md transition-shadow"
-              @click="selectVehicle(vehicle.id)"
-            >
-              <h2 class="text-xl font-semibold">
-                {{ vehicle.make || 'Unknown' }} {{ vehicle.model || '' }}
-              </h2>
-              <p class="text-sm text-muted-foreground">
-                {{ vehicle.year || 'N/A' }}
-              </p>
-              <p v-if="vehicle.vrm" class="text-xs text-muted-foreground mt-1">
-                {{ vehicle.vrm }}
-              </p>
-            </Card>
-          </div>
-        </div>
       </div>
     </div>
   </div>
@@ -201,8 +189,6 @@ import { useVehiclesStore } from '@/stores/vehicles';
 import type { FuelStats, Reminder, ReminderType } from '@carbobo/shared';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
-import { Select } from '@/components/ui/select';
 
 const vehiclesStore = useVehiclesStore();
 
