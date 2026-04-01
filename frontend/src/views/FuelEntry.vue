@@ -25,9 +25,9 @@
               type="number"
               step="0.1"
               :placeholder="
-                vehicle?.odometer_unit_default === 'miles'
-                  ? 'Miles'
-                  : 'Kilometers'
+                vehicle?.odometer_unit_default === 'km'
+                  ? 'e.g. 72,000 km'
+                  : 'e.g. 45,000 miles'
               "
               required
             />
