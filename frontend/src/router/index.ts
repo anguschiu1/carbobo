@@ -25,6 +25,12 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
   },
   {
+    path: '/vehicles/manage',
+    name: 'vehicles-manage',
+    component: () => import('@/views/VehiclesManage.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/vehicles/:id/edit',
     name: 'vehicle-edit',
     component: () => import('@/views/VehicleForm.vue'),

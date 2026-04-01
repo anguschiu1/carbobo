@@ -10,6 +10,13 @@
         Dashboard
       </router-link>
       <router-link
+        to="/vehicles/manage"
+        class="block px-4 py-2 rounded hover:bg-accent"
+        :class="{ 'bg-accent': $route.name === 'vehicles-manage' }"
+      >
+        Manage Vehicles
+      </router-link>
+      <router-link
         :to="fuelHistoryPath"
         class="block px-4 py-2 rounded hover:bg-accent"
         :class="{ 'bg-accent': $route.name === 'fuel-history' }"

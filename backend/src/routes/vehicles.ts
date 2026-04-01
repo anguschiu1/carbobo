@@ -107,10 +107,12 @@ router.put('/:id', (req: AuthRequest, res) => {
       odometer_unit_default,
     } = req.body
 
-    // Verify ownership
+    // Verify ownership and get existing odometer unit
     const existing = db
-      .prepare('SELECT id FROM vehicles WHERE id = ? AND owner_user_id = ?')
-      .get(vehicleId, userId)
+      .prepare(
+        'SELECT id, odometer_unit_default FROM vehicles WHERE id = ? AND owner_user_id = ?',
+      )
+      .get(vehicleId, userId) as { id: string; odometer_unit_default: OdometerUnit } | undefined
 
     if (!existing) {
       return res.status(404).json({ error: 'Vehicle not found' })
@@ -155,6 +157,27 @@ router.put('/:id', (req: AuthRequest, res) => {
     db.prepare(
       `UPDATE vehicles SET ${updates.join(', ')} WHERE id = ? AND owner_user_id = ?`
     ).run(...values)
+
+    // If odometer unit changed, recalculate all fuel entry odometer readings for this vehicle
+    if (
+      odometer_unit_default &&
+      odometer_unit_default !== existing.odometer_unit_default &&
+      (odometer_unit_default === 'miles' || odometer_unit_default === 'km') &&
+      (existing.odometer_unit_default === 'miles' || existing.odometer_unit_default === 'km')
+    ) {
+      const milesToKm = 1.60934
+      if (existing.odometer_unit_default === 'miles' && odometer_unit_default === 'km') {
+        // Convert miles → km
+        db.prepare(
+          'UPDATE fuel_entries SET odometer_reading = odometer_reading * ?, odometer_unit = ? WHERE vehicle_id = ? AND odometer_unit = ?',
+        ).run(milesToKm, 'km', vehicleId, 'miles')
+      } else if (existing.odometer_unit_default === 'km' && odometer_unit_default === 'miles') {
+        // Convert km → miles
+        db.prepare(
+          'UPDATE fuel_entries SET odometer_reading = odometer_reading / ?, odometer_unit = ? WHERE vehicle_id = ? AND odometer_unit = ?',
+        ).run(milesToKm, 'miles', vehicleId, 'km')
+      }
+    }
 
     const vehicle = db.prepare('SELECT * FROM vehicles WHERE id = ?').get(vehicleId) as Vehicle
 

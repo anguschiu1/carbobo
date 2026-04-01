@@ -36,11 +36,20 @@
         <div>
           <p class="text-sm text-muted-foreground">Total Distance</p>
           <p class="text-2xl font-bold">
-            {{
-              stats.total_distance_miles
-                ? `${stats.total_distance_miles.toFixed(2)} mi`
-                : 'N/A'
-            }}
+            <span v-if="vehicle?.odometer_unit_default === 'km'">
+              {{
+                stats.total_distance_km
+                  ? `${stats.total_distance_km.toFixed(2)} km`
+                  : 'N/A'
+              }}
+            </span>
+            <span v-else>
+              {{
+                stats.total_distance_miles
+                  ? `${stats.total_distance_miles.toFixed(2)} mi`
+                  : 'N/A'
+              }}
+            </span>
           </p>
         </div>
       </div>
@@ -56,7 +65,12 @@
           <div>
             <p class="text-muted-foreground">Distance</p>
             <p class="font-semibold">
-              {{ interval.distance_miles.toFixed(1) }} mi
+              <span v-if="vehicle?.odometer_unit_default === 'km'">
+                {{ interval.distance_km.toFixed(1) }} km
+              </span>
+              <span v-else>
+                {{ interval.distance_miles.toFixed(1) }} mi
+              </span>
             </p>
           </div>
           <div>

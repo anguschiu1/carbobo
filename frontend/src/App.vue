@@ -40,6 +40,13 @@
               Fuel History
             </router-link>
             <router-link
+              to="/vehicles/manage"
+              class="block px-3 py-2 hover:bg-accent"
+              @click="isMobileMenuOpen = false"
+            >
+              Manage Vehicles
+            </router-link>
+            <router-link
               to="/fuel-prices"
               class="block px-3 py-2 hover:bg-accent"
               @click="isMobileMenuOpen = false"
