@@ -157,11 +157,19 @@
             </Button>
             <Button
               variant="outline"
-              @click="$router.push(`/fuel-prices`)"
+              @click="$router.push('/fuel-prices')"
               class="h-auto py-3 flex flex-col items-center gap-1"
             >
               <span class="text-2xl">💰</span>
               <span>Fuel Prices</span>
+            </Button>
+            <Button
+              variant="outline"
+              @click="$router.push(`/vehicles/${selectedVehicleId}/fuel`)"
+              class="h-auto py-3 flex flex-col items-center gap-1"
+            >
+              <span class="text-2xl">📊</span>
+              <span>Fuel History</span>
             </Button>
             <Button
               variant="outline"
@@ -214,6 +222,10 @@ function getReminderTypeLabel(type: ReminderType): string {
 
 function selectVehicle(vehicleId: string) {
   selectedVehicleId.value = vehicleId;
+  const found = vehiclesStore.vehicles.find((v) => v.id === vehicleId);
+  if (found) {
+    vehiclesStore.currentVehicle = found;
+  }
   loadVehicleData();
 }
 
@@ -245,6 +257,7 @@ onMounted(async () => {
   const first = vehiclesStore.vehicles[0];
   if (first) {
     selectedVehicleId.value = first.id;
+    vehiclesStore.currentVehicle = first;
     await loadVehicleData();
   }
 });

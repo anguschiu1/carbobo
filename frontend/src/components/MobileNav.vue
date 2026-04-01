@@ -16,19 +16,50 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed } from 'vue';
+import { useRoute } from 'vue-router';
+import { useVehiclesStore } from '@/stores/vehicles';
 
-const route = useRoute()
+const route = useRoute();
+const vehiclesStore = useVehiclesStore();
+
+const activeVehicleId = computed(() => {
+  // Prefer vehicleId from the current route (already on a vehicle page)
+  const routeVehicleId = route.params.vehicleId as string | undefined;
+  if (routeVehicleId) {
+    return routeVehicleId;
+  }
+
+  // Then fall back to the store's currentVehicle
+  if (vehiclesStore.currentVehicle?.id) {
+    return vehiclesStore.currentVehicle.id;
+  }
+
+  // Finally, try the first known vehicle (if any)
+  const first = vehiclesStore.vehicles[0];
+  return first?.id;
+});
 
 const navItems = computed(() => {
-  const vehicleId = route.params.vehicleId as string | undefined
+  const vehicleId = activeVehicleId.value;
 
   return [
     { path: '/', label: 'Home', icon: '🏠' },
-    { path: vehicleId ? `/vehicles/${vehicleId}/fuel` : '/', label: 'Fuel', icon: '⛽' },
-    { path: vehicleId ? `/vehicles/${vehicleId}/health-scans` : '/', label: 'Scan', icon: '📸' },
-    { path: vehicleId ? `/vehicles/${vehicleId}/documents` : '/', label: 'Docs', icon: '📄' },
-  ]
-})
+    {
+      path: vehicleId ? `/vehicles/${vehicleId}/fuel` : '/',
+      label: 'Fuel',
+      icon: '⛽',
+    },
+    {
+      path: vehicleId ? `/vehicles/${vehicleId}/health-scans` : '/',
+      label: 'Scan',
+      icon: '📸',
+    },
+    {
+      path: vehicleId ? `/vehicles/${vehicleId}/documents` : '/',
+      label: 'Docs',
+      icon: '📄',
+    },
+  ];
+});
 </script>
