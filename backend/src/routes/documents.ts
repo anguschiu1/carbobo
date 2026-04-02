@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../db/index.js'
 import { authenticateToken, type AuthRequest } from '../middleware/auth.js'
+import { verifyVehicleOwnership } from '../middleware/vehicleOwnership.js'
 import { uploadDocument, getFileUrl } from '../utils/fileUpload.js'
 import { param } from '../utils/params.js'
 import type { Document } from '@carbobo/shared'
@@ -12,23 +13,10 @@ const db = getDatabase()
 // All routes require authentication
 router.use(authenticateToken)
 
-// Helper to verify vehicle ownership
-function verifyVehicleOwnership(userId: string, vehicleId: string): boolean {
-  const vehicle = db
-    .prepare('SELECT id FROM vehicles WHERE id = ? AND owner_user_id = ?')
-    .get(vehicleId, userId)
-  return !!vehicle
-}
-
 // Upload document
-router.post('/:vehicleId/documents', uploadDocument.single('file'), (req: AuthRequest, res) => {
+router.post('/:vehicleId/documents', verifyVehicleOwnership, uploadDocument.single('file'), (req: AuthRequest, res) => {
   try {
-    const userId = req.userId!
     const vehicleId = param(req, 'vehicleId')
-
-    if (!verifyVehicleOwnership(userId, vehicleId)) {
-      return res.status(404).json({ error: 'Vehicle not found' })
-    }
 
     const file = req.file
     if (!file) {
@@ -61,14 +49,9 @@ router.post('/:vehicleId/documents', uploadDocument.single('file'), (req: AuthRe
 })
 
 // Get documents for vehicle
-router.get('/:vehicleId/documents', (req: AuthRequest, res) => {
+router.get('/:vehicleId/documents', verifyVehicleOwnership, (req: AuthRequest, res) => {
   try {
-    const userId = req.userId!
     const vehicleId = param(req, 'vehicleId')
-
-    if (!verifyVehicleOwnership(userId, vehicleId)) {
-      return res.status(404).json({ error: 'Vehicle not found' })
-    }
 
     const documents = db
       .prepare('SELECT * FROM documents WHERE vehicle_id = ? ORDER BY occurred_at DESC')
@@ -82,15 +65,10 @@ router.get('/:vehicleId/documents', (req: AuthRequest, res) => {
 })
 
 // Get single document (serve file)
-router.get('/:vehicleId/documents/:docId', (req: AuthRequest, res) => {
+router.get('/:vehicleId/documents/:docId', verifyVehicleOwnership, (req: AuthRequest, res) => {
   try {
-    const userId = req.userId!
     const vehicleId = param(req, 'vehicleId')
     const docId = param(req, 'docId')
-
-    if (!verifyVehicleOwnership(userId, vehicleId)) {
-      return res.status(404).json({ error: 'Vehicle not found' })
-    }
 
     const document = db
       .prepare('SELECT * FROM documents WHERE id = ? AND vehicle_id = ?')

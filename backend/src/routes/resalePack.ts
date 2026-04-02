@@ -12,7 +12,7 @@ const db = getDatabase()
  * POST /api/vehicles/:id/resale-pack/generate
  * Requires authentication
  */
-router.post('/vehicles/:vehicleId/resale-pack/generate', async (req, res) => {
+router.post('/vehicles/:vehicleId/resale-pack/generate', (req, res) => {
   try {
     const vehicleId = req.params.vehicleId
     const userId = (req as any).userId
@@ -63,7 +63,7 @@ router.post('/vehicles/:vehicleId/resale-pack/generate', async (req, res) => {
  * Get public resale pack view (no auth required)
  * GET /api/resale-pack/:shareId
  */
-router.get('/resale-pack/:shareId', async (req, res) => {
+router.get('/resale-pack/:shareId', (req, res) => {
   try {
     const shareId = req.params.shareId
 
