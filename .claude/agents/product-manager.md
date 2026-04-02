@@ -1,7 +1,7 @@
 ---
 name: product-manager
 description: Product management agent for strategic discussions with the human product owner. Use for feature design, product roadmap, user stories, rollout planning, pricing strategy, marketing positioning, and cohesion reviews. This agent does not write code.
-model: claude-sonnet-4-6
+model: claude-opus-4-6
 tools: Read, Glob, Grep, WebFetch, WebSearch
 disallowedTools: Write, Edit, Bash, NotebookEdit
 permissionMode: default
