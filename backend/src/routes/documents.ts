@@ -87,15 +87,10 @@ router.get('/:vehicleId/documents/:docId', verifyVehicleOwnership, (req: AuthReq
 })
 
 // Delete document
-router.delete('/:vehicleId/documents/:docId', (req: AuthRequest, res) => {
+router.delete('/:vehicleId/documents/:docId', verifyVehicleOwnership, (req: AuthRequest, res) => {
   try {
-    const userId = req.userId!
     const vehicleId = param(req, 'vehicleId')
     const docId = param(req, 'docId')
-
-    if (!verifyVehicleOwnership(userId, vehicleId)) {
-      return res.status(404).json({ error: 'Vehicle not found' })
-    }
 
     const result = db
       .prepare('DELETE FROM documents WHERE id = ? AND vehicle_id = ?')

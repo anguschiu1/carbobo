@@ -67,13 +67,13 @@ export function calculateFuelIntervals(entries: FuelEntry[]): FuelInterval[] {
         if (distanceMiles > 0 && accumulatedLitres > 0) {
           const mpg = calculateMPG(accumulatedLitres, distanceMiles)
           const lPer100km = calculateLPer100km(accumulatedLitres, distanceKm)
-          const totalCost = sortedEntries
+          const intervalCost = sortedEntries
             .slice(
               sortedEntries.indexOf(intervalStart),
               i + 1
             )
             .reduce((sum, e) => sum + e.total_cost_gbp, 0)
-          const costPerMile = calculateCostPerMile(totalCost, distanceMiles)
+          const costPerMile = calculateCostPerMile(intervalCost, distanceMiles)
 
           intervals.push({
             start_entry: intervalStart,
@@ -84,6 +84,7 @@ export function calculateFuelIntervals(entries: FuelEntry[]): FuelInterval[] {
             mpg,
             l_per_100km: lPer100km,
             cost_per_mile: costPerMile,
+            total_cost_gbp: intervalCost,
           })
         }
 
@@ -146,10 +147,9 @@ export function calculateFuelStats(entries: FuelEntry[]): FuelStats {
   const totalDistanceMiles = intervals.reduce((sum, i) => sum + i.distance_miles, 0)
   const totalDistanceKm = intervals.reduce((sum, i) => sum + i.distance_km, 0)
   const totalLitres = intervals.reduce((sum, i) => sum + i.litres_total, 0)
-  const totalCost = intervals.reduce(
-    (sum, i) => sum + i.start_entry.total_cost_gbp + i.end_entry.total_cost_gbp,
-    0
-  )
+  // Use the per-interval total_cost_gbp already computed in calculateFuelIntervals to avoid
+  // double-counting boundary entries (the end_entry of interval N is the start_entry of N+1).
+  const totalCost = intervals.reduce((sum, i) => sum + i.total_cost_gbp, 0)
 
   const rollingMpg = totalDistanceMiles > 0 ? calculateMPG(totalLitres, totalDistanceMiles) : undefined
   const rollingLPer100km = totalDistanceKm > 0 ? calculateLPer100km(totalLitres, totalDistanceKm) : undefined

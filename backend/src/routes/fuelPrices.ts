@@ -23,11 +23,11 @@ interface FuelStation {
  * Stub implementation for UK Fuel Finder API
  * Replace this with actual API integration when API key is available
  */
-async function getNearbyFuelStations(
+function getNearbyFuelStations(
   postcode: string,
   fuelType: string = 'petrol',
   radiusKm: number = 10
-): Promise<FuelStation[]> {
+): FuelStation[] {
   // This is a stub - replace with actual API call
   // UK Fuel Finder API documentation: https://www.gov.uk/guidance/fuel-finder-api
   
@@ -85,7 +85,7 @@ async function getNearbyFuelStations(
  * POST /api/fuel-prices/nearby
  * Body: { postcode: string, fuel_type?: string, radius_km?: number }
  */
-router.post('/fuel-prices/nearby', async (req: Request, res: Response) => {
+router.post('/fuel-prices/nearby', (req: Request, res: Response) => {
   try {
     const { postcode, fuel_type = 'petrol', radius_km = 10 } = req.body
 
@@ -102,8 +102,8 @@ router.post('/fuel-prices/nearby', async (req: Request, res: Response) => {
     if (!apiKey) {
       // Return stub data for development
       console.warn('FUEL_FINDER_API_KEY not set - returning stub data')
-      const stations = await getNearbyFuelStations(postcode, fuel_type, radius_km)
-      
+      const stations = getNearbyFuelStations(postcode, fuel_type, radius_km)
+
       // Sort by price for selected fuel type
       const sortedStations = stations
         .map((station) => {
@@ -125,40 +125,9 @@ router.post('/fuel-prices/nearby', async (req: Request, res: Response) => {
       })
     }
 
-    // TODO: Implement actual API call when API key is available
-    // Example implementation:
-    /*
-    const tokenResponse = await fetch('https://api.fuel-finder.gov.uk/oauth/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        grant_type: 'client_credentials',
-        client_id: process.env.FUEL_FINDER_CLIENT_ID,
-        client_secret: process.env.FUEL_FINDER_CLIENT_SECRET,
-      }),
-    })
-    
-    const tokenData = await tokenResponse.json()
-    const accessToken = tokenData.access_token
-    
-    // Then use access token to fetch fuel prices
-    const stationsResponse = await fetch(
-      `https://api.fuel-finder.gov.uk/stations/nearby?postcode=${postcode}&fuel_type=${fuel_type}&radius=${radius_km}`,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      }
-    )
-    
-    const stationsData = await stationsResponse.json()
-    return res.json({ stations: stationsData.stations, postcode, fuel_type })
-    */
-
+    // TODO: Implement actual API call when FUEL_FINDER_API_KEY is set.
     // For now, return stub
-    const stations = await getNearbyFuelStations(postcode, fuel_type, radius_km)
+    const stations = getNearbyFuelStations(postcode, fuel_type, radius_km)
     const sortedStations = stations
       .map((station) => {
         const price = station.prices.find((p) => p.fuel_type === fuel_type)

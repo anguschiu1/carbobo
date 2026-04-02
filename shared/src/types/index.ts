@@ -94,4 +94,6 @@ export interface FuelInterval {
   mpg: number;
   l_per_100km: number;
   cost_per_mile: number;
+  /** Sum of total_cost_gbp for all fill-ups within this interval (start_entry through end_entry inclusive). */
+  total_cost_gbp: number;
 }

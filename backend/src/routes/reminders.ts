@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../db/index.js'
 import { param } from '../utils/params.js'
 import { authenticateToken, type AuthRequest } from '../middleware/auth.js'
+import { verifyVehicleOwnership } from '../middleware/vehicleOwnership.js'
 import type { Reminder } from '@carbobo/shared'
 
 const router = Router()
@@ -11,23 +12,10 @@ const db = getDatabase()
 // All routes require authentication
 router.use(authenticateToken)
 
-// Helper to verify vehicle ownership
-function verifyVehicleOwnership(userId: string, vehicleId: string): boolean {
-  const vehicle = db
-    .prepare('SELECT id FROM vehicles WHERE id = ? AND owner_user_id = ?')
-    .get(vehicleId, userId)
-  return !!vehicle
-}
-
 // Create reminder
-router.post('/:vehicleId/reminders', (req: AuthRequest, res) => {
+router.post('/:vehicleId/reminders', verifyVehicleOwnership, (req: AuthRequest, res) => {
   try {
-    const userId = req.userId!
     const vehicleId = param(req, 'vehicleId')
-
-    if (!verifyVehicleOwnership(userId, vehicleId)) {
-      return res.status(404).json({ error: 'Vehicle not found' })
-    }
 
     const { type, due_date, notes } = req.body
 
@@ -59,14 +47,9 @@ router.post('/:vehicleId/reminders', (req: AuthRequest, res) => {
 })
 
 // Get reminders for vehicle
-router.get('/:vehicleId/reminders', (req: AuthRequest, res) => {
+router.get('/:vehicleId/reminders', verifyVehicleOwnership, (req: AuthRequest, res) => {
   try {
-    const userId = req.userId!
     const vehicleId = param(req, 'vehicleId')
-
-    if (!verifyVehicleOwnership(userId, vehicleId)) {
-      return res.status(404).json({ error: 'Vehicle not found' })
-    }
 
     const reminders = db
       .prepare('SELECT * FROM reminders WHERE vehicle_id = ? ORDER BY due_date ASC')
