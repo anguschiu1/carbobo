@@ -1,7 +1,7 @@
 ---
 name: code-reviewer
 description: Read-only code review agent. Use for reviewing PRs, auditing code quality, identifying dead code and bloat, checking readability and reusability, evaluating external dependencies, and versioning recommendations. Never modifies files.
-model: claude-opus-4-6
+model: claude-sonnet-4-6
 tools: Read, Glob, Grep, Bash
 disallowedTools: Write, Edit, NotebookEdit
 permissionMode: default
