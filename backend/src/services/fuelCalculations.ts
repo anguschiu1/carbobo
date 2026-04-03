@@ -67,9 +67,13 @@ export function calculateFuelIntervals(entries: FuelEntry[]): FuelInterval[] {
         if (distanceMiles > 0 && accumulatedLitres > 0) {
           const mpg = calculateMPG(accumulatedLitres, distanceMiles)
           const lPer100km = calculateLPer100km(accumulatedLitres, distanceKm)
+          // Exclude intervalStart from the cost slice — its cost belongs to the
+          // preceding interval (or is the baseline fill before tracking began).
+          // Only the fills FROM the entry after intervalStart up to and including
+          // the closing full-tank entry contribute to this interval's cost.
           const intervalCost = sortedEntries
             .slice(
-              sortedEntries.indexOf(intervalStart),
+              sortedEntries.indexOf(intervalStart) + 1,
               i + 1
             )
             .reduce((sum, e) => sum + e.total_cost_gbp, 0)

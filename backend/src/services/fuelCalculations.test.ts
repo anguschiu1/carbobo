@@ -163,8 +163,9 @@ describe('calculateFuelIntervals', () => {
     expect(intervals).toHaveLength(1)
     const iv = intervals[0]
     expect(iv.distance_miles).toBeCloseTo(400, 1)
-    // litres for interval = e2.litres + e3.litres (e1 started the interval)
-    expect(iv.litres_total).toBeCloseTo(55, 2)
+    // litres_total = e1.litres + e2.litres (the algorithm seeds accumulatedLitres at the
+    // start entry and accumulates partials; e3 completes but its litres seed the NEXT interval)
+    expect(iv.litres_total).toBeCloseTo(70, 2)
   })
 
   it('multiple partial fills before a full tank are all accumulated', () => {
@@ -175,8 +176,9 @@ describe('calculateFuelIntervals', () => {
 
     const intervals = calculateFuelIntervals([e1, e2, e3, e4])
     expect(intervals).toHaveLength(1)
-    // litres = e2+e3+e4 = 35
-    expect(intervals[0].litres_total).toBeCloseTo(35, 2)
+    // litres_total = e1 + e2 + e3 (start seeded with e1; e2,e3 accumulated; e4 closes interval
+    // and seeds the next one, not counted in this interval)
+    expect(intervals[0].litres_total).toBeCloseTo(70, 2)
     expect(intervals[0].distance_miles).toBeCloseTo(300, 1)
   })
 
@@ -187,9 +189,11 @@ describe('calculateFuelIntervals', () => {
 
     const intervals = calculateFuelIntervals([e1, e2, e3])
     expect(intervals).toHaveLength(2)
-    expect(intervals[0].litres_total).toBeCloseTo(40, 2)
+    // Interval 1: seeded with e1.litres=50; e2 closes it (e2 seeds interval 2, not counted here)
+    expect(intervals[0].litres_total).toBeCloseTo(50, 2)
     expect(intervals[0].distance_miles).toBeCloseTo(400, 1)
-    expect(intervals[1].litres_total).toBeCloseTo(42, 2)
+    // Interval 2: seeded with e2.litres=40; e3 closes it
+    expect(intervals[1].litres_total).toBeCloseTo(40, 2)
     expect(intervals[1].distance_miles).toBeCloseTo(400, 1)
   })
 
@@ -237,15 +241,21 @@ describe('calculateFuelIntervals', () => {
 
 describe('cost double-counting regression', () => {
   /**
-   * Sequence: partial → partial → full → partial → full
+   * Sequence: full → partial → full → partial → full
    *
-   * Each fill has cost = 15. With 5 entries that is £75 total.
-   * Two intervals are produced; their combined total_cost_gbp must equal £75
-   * (the start_entry of interval 2 is the end_entry of interval 1 — it must
-   * not be counted twice).
+   * The start_entry of each interval sets the baseline odometer — its cost is
+   * NOT attributed to the interval (it was the fill that ended the previous
+   * interval, or the very first fill before tracking began). Only the partial
+   * fills + the closing full-tank fill are counted for each interval.
+   *
+   * 5 entries, each £15 = £75 total paid.
+   * e1 is the baseline (not counted in any interval).
+   * Interval 1 (e1→e3): e2 + e3 = £15 + £15 = £30
+   * Interval 2 (e3→e5): e4 + e5 = £15 + £15 = £30
+   * Combined = £60 (e1's £15 is unattributed — it was the starting baseline).
    */
-  it('does not double-count the boundary fill between two intervals', () => {
-    const e1 = makeEntry({ odometer_reading: 0,   litres_added: 10, is_full_tank: false, total_cost_gbp: 15,
+  it('two intervals: boundary entry is excluded from both interval costs', () => {
+    const e1 = makeEntry({ odometer_reading: 0,   litres_added: 10, is_full_tank: true,  total_cost_gbp: 15,
       occurred_at: '2025-01-01T12:00:00Z' })
     const e2 = makeEntry({ odometer_reading: 100, litres_added: 10, is_full_tank: false, total_cost_gbp: 15,
       occurred_at: '2025-01-02T12:00:00Z' })
@@ -257,18 +267,22 @@ describe('cost double-counting regression', () => {
       occurred_at: '2025-01-05T12:00:00Z' })
 
     const intervals = calculateFuelIntervals([e1, e2, e3, e4, e5])
-    // Interval 1: e3 closes the first full-tank-to-full-tank span.
-    // Interval 2: e5 closes the second.
     expect(intervals).toHaveLength(2)
 
+    // Interval 1 (e1→e3): [e2, e3] → £15 + £15 = £30 (e1 excluded as baseline)
+    expect(intervals[0].total_cost_gbp).toBeCloseTo(30, 2)
+    // Interval 2 (e3→e5): [e4, e5] → £15 + £15 = £30 (e3 excluded as start of new interval)
+    expect(intervals[1].total_cost_gbp).toBeCloseTo(30, 2)
+
+    // Combined = £60; e1's £15 is the unattributed baseline fill.
     const combinedCost = intervals.reduce((sum, iv) => sum + iv.total_cost_gbp, 0)
-    // e3 is counted in interval 1 only; e5 in interval 2 only.
-    // e1 + e2 are partials before e3 — they belong to interval 1.
-    // Combined: e1+e2+e3 = 45 for interval 1; e4+e5 = 30 for interval 2 = £75 total.
-    expect(combinedCost).toBeCloseTo(75, 2)
+    expect(combinedCost).toBeCloseTo(60, 2)
   })
 
-  it('each interval total_cost_gbp equals the sum of its own fill-ups', () => {
+  it('interval cost excludes start_entry, includes partial fills + closing full fill', () => {
+    // full(e1) → partial(e2) → full(e3) → full(e4)
+    // Interval 1 (e1→e3): [e2, e3] = £30 + £52.5 = £82.5  (e1 excluded)
+    // Interval 2 (e3→e4): [e4]     = £57             (e3 excluded as new start)
     const e1 = makeEntry({ odometer_reading: 0,   litres_added: 40, is_full_tank: true,  total_cost_gbp: 60,
       occurred_at: '2025-01-01T12:00:00Z' })
     const e2 = makeEntry({ odometer_reading: 200, litres_added: 20, is_full_tank: false, total_cost_gbp: 30,
@@ -281,10 +295,7 @@ describe('cost double-counting regression', () => {
     const intervals = calculateFuelIntervals([e1, e2, e3, e4])
     expect(intervals).toHaveLength(2)
 
-    // Interval 1 (e1→e3): entries are e2+e3 = £30+£52.5 = £82.5
     expect(intervals[0].total_cost_gbp).toBeCloseTo(82.5, 2)
-
-    // Interval 2 (e3→e4): entry is e4 = £57
     expect(intervals[1].total_cost_gbp).toBeCloseTo(57, 2)
   })
 })
