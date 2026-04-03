@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import {
   calculateMPG,
   calculateLPer100km,
@@ -35,6 +35,8 @@ function makeEntry(overrides: Partial<FuelEntry> = {}): FuelEntry {
     ...overrides,
   }
 }
+
+describe('fuelCalculations (all)', () => {
 
 beforeEach(() => {
   _seq = 0
@@ -233,6 +235,25 @@ describe('calculateFuelIntervals', () => {
     expect(intervals).toHaveLength(1)
     expect(intervals[0].distance_miles).toBeCloseTo(400, 1)
   })
+
+  it('should return empty array when full tank is followed only by a partial with no closing full tank', () => {
+    const e1 = makeEntry({ odometer_reading: 0,   litres_added: 50, is_full_tank: true,  total_cost_gbp: 75 })
+    const e2 = makeEntry({ odometer_reading: 400, litres_added: 20, is_full_tank: false, total_cost_gbp: 30 })
+
+    const intervals = calculateFuelIntervals([e1, e2])
+
+    expect(intervals).toEqual([])
+  })
+
+  it('should return zero intervals when two entries have identical odometer readings', () => {
+    const e1 = makeEntry({ odometer_reading: 1000, litres_added: 40, is_full_tank: true,  total_cost_gbp: 60 })
+    const e2 = makeEntry({ odometer_reading: 1000, litres_added: 40, is_full_tank: true,  total_cost_gbp: 60 })
+
+    const intervals = calculateFuelIntervals([e1, e2])
+
+    // distance = 0 means no valid interval is produced
+    expect(intervals).toHaveLength(0)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -321,14 +342,20 @@ describe('calculateFuelStats', () => {
   })
 
   it('returns rolling MPG when complete intervals exist', () => {
+    // e1: start interval at 0 miles, 50L — seeds accumulatedLitres = 50
+    // e2: closes interval at 400 miles, 40L (e1's litres form the interval, e2 seeds the next)
+    // Interval: 50L over 400 miles
+    // MPG = 400 / (50 / 4.54609) = 400 / 10.997 ≈ 36.37
+    // L/100km: 400 miles = 643.74 km → (50 / 643.74) * 100 ≈ 7.77 L/100km
+    // cost_per_mile: interval cost = e2's cost only (e1 excluded as start) = £60 / 400 = 0.15
     const e1 = makeEntry({ odometer_reading: 0,   litres_added: 50, is_full_tank: true, total_cost_gbp: 75 })
     const e2 = makeEntry({ odometer_reading: 400, litres_added: 40, is_full_tank: true, total_cost_gbp: 60 })
 
     const stats = calculateFuelStats([e1, e2])
-    expect(stats.rolling_mpg).toBeDefined()
-    expect(stats.rolling_mpg).toBeGreaterThan(0)
-    expect(stats.l_per_100km).toBeDefined()
-    expect(stats.cost_per_mile).toBeDefined()
+
+    expect(stats.rolling_mpg).toBeCloseTo(36, 0)
+    expect(stats.l_per_100km).toBeCloseTo(8, 0)
+    expect(stats.cost_per_mile).toBeCloseTo(0.15, 2)
   })
 
   it('total cost is not inflated by boundary double-counting', () => {
@@ -427,4 +454,39 @@ describe('validateFuelEntry', () => {
     expect(result.warning).toBeDefined()
     expect(result.warning).toMatch(/cost|price/i)
   })
+
+  it('should return valid with no warning when cost fields are within tolerance', () => {
+    // 40L at 150p/L = £60.00 — exactly on the nose, well within 50p tolerance
+    const result = validateFuelEntry(
+      {
+        odometer_reading: 1000,
+        odometer_unit: 'miles',
+        total_cost_gbp: 60,
+        price_pence_per_litre: 150,
+        litres_added: 40,
+      },
+      []
+    )
+
+    expect(result.valid).toBe(true)
+    expect(result.warning).toBeUndefined()
+  })
+
+  it('should return valid with no spurious warning when only total_cost_gbp is set', () => {
+    // price_pence_per_litre and litres_added are absent — the consistency check
+    // should not fire because the guard requires all three fields to be truthy
+    const result = validateFuelEntry(
+      {
+        odometer_reading: 1000,
+        odometer_unit: 'miles',
+        total_cost_gbp: 55,
+      },
+      []
+    )
+
+    expect(result.valid).toBe(true)
+    expect(result.warning).toBeUndefined()
+  })
 })
+
+}) // end describe('fuelCalculations (all)')
