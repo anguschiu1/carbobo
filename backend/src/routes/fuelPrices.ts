@@ -86,7 +86,8 @@ const FUEL_KEY_MAP: Record<string, string> = {
   petrol: 'E10',   // standard petrol (10% ethanol blend)
   diesel: 'B7',    // standard diesel (7% FAME blend)
   'super-unleaded': 'E5',
-  lpg: 'SDV',
+  // lpg: 'SDV' — removed; SDV key is unverified against the real CMA feed schema.
+  //              Re-add with the confirmed key once validated.
 }
 
 const FETCH_TIMEOUT_MS = 5_000
@@ -108,6 +109,9 @@ interface CacheEntry<T> {
 
 const priceCache = new Map<string, CacheEntry<GovUkFeedResponse>>()
 const geocodeCache = new Map<string, CacheEntry<PostcodesIoResult>>()
+
+/** In-flight Promise for the gov.uk feed, shared across concurrent cache-miss callers. */
+let feedInFlight: Promise<GovUkFeedResponse | null> | null = null
 
 function getCached<T>(cache: Map<string, CacheEntry<T>>, key: string): T | null {
   const entry = cache.get(key)
@@ -195,7 +199,7 @@ async function geocodePostcode(postcode: string): Promise<PostcodesIoResult> {
 
   const body = await response.json() as { status: number; result: { latitude: number; longitude: number; postcode: string } }
 
-  if (!body.result?.latitude || !body.result?.longitude) {
+  if (body.result?.latitude == null || body.result?.longitude == null) {
     throw new Error('Postcode not found')
   }
 
@@ -206,12 +210,23 @@ async function geocodePostcode(postcode: string): Promise<PostcodesIoResult> {
   }
 
   setCached(geocodeCache, normalised, result, GEOCODE_CACHE_TTL_MS)
+
+  // Evict the oldest entry when the cache exceeds 10,000 postcodes to prevent
+  // unbounded memory growth (Map preserves insertion order, so .keys().next()
+  // yields the oldest key).
+  if (geocodeCache.size > 10_000) {
+    const firstKey = geocodeCache.keys().next().value
+    if (firstKey !== undefined) geocodeCache.delete(firstKey)
+  }
+
   return result
 }
 
 /**
  * Fetches the gov.uk CMA fuel price feed and returns the parsed response.
  * The result is cached for 30 minutes.
+ * Concurrent callers that arrive during a cache miss share a single outbound
+ * request via `feedInFlight` to prevent a thundering herd against the feed URL.
  * Returns null if the feed is unavailable or returns unexpected data.
  */
 async function fetchGovUkFeed(): Promise<GovUkFeedResponse | null> {
@@ -220,36 +235,43 @@ async function fetchGovUkFeed(): Promise<GovUkFeedResponse | null> {
   const cached = getCached(priceCache, CACHE_KEY)
   if (cached) return cached
 
-  let response: FetchResponse
-  try {
-    response = await fetchWithTimeout(GOV_UK_FEED_URL, FETCH_TIMEOUT_MS)
-  } catch (err) {
-    console.error('[fuelPrices] Gov.uk feed fetch failed (timeout or network error):', err)
-    return null
-  }
+  // Share in-flight request across concurrent cache-miss callers.
+  if (feedInFlight) return feedInFlight
 
-  if (!response.ok) {
-    console.error(`[fuelPrices] Gov.uk feed returned HTTP ${response.status}`)
-    return null
-  }
+  feedInFlight = (async () => {
+    let response: FetchResponse
+    try {
+      response = await fetchWithTimeout(GOV_UK_FEED_URL, FETCH_TIMEOUT_MS)
+    } catch (err) {
+      console.error('[fuelPrices] Gov.uk feed fetch failed (timeout or network error):', err)
+      return null
+    }
 
-  let data: unknown
-  try {
-    data = await response.json()
-  } catch (err) {
-    console.error('[fuelPrices] Gov.uk feed returned non-JSON response:', err)
-    return null
-  }
+    if (!response.ok) {
+      console.error(`[fuelPrices] Gov.uk feed returned HTTP ${response.status}`)
+      return null
+    }
 
-  // The CMA feed shape: { last_updated: string, stations: GovUkStation[] }
-  if (!data || typeof data !== 'object' || !Array.isArray((data as GovUkFeedResponse).stations)) {
-    console.error('[fuelPrices] Gov.uk feed returned unexpected shape:', JSON.stringify(data).slice(0, 200))
-    return null
-  }
+    let data: unknown
+    try {
+      data = await response.json()
+    } catch (err) {
+      console.error('[fuelPrices] Gov.uk feed returned non-JSON response:', err)
+      return null
+    }
 
-  const feedData = data as GovUkFeedResponse
-  setCached(priceCache, CACHE_KEY, feedData, PRICES_CACHE_TTL_MS)
-  return feedData
+    // The CMA feed shape: { last_updated: string, stations: GovUkStation[] }
+    if (!data || typeof data !== 'object' || !Array.isArray((data as GovUkFeedResponse).stations)) {
+      console.error('[fuelPrices] Gov.uk feed returned unexpected shape:', JSON.stringify(data).slice(0, 200))
+      return null
+    }
+
+    const feedData = data as GovUkFeedResponse
+    setCached(priceCache, CACHE_KEY, feedData, PRICES_CACHE_TTL_MS)
+    return feedData
+  })().finally(() => { feedInFlight = null })
+
+  return feedInFlight
 }
 
 /**
@@ -317,8 +339,8 @@ function stationPriceForFuelType(
  *
  * Request body:
  *   postcode   string  — UK postcode (e.g. "SW1A 1AA")
- *   fuel_type  string  — "petrol" | "diesel" | "super-unleaded" | "lpg" (default: "petrol")
- *   radius_km  number  — search radius in km (default: 10, max: 50)
+ *   fuel_type  string  — "petrol" | "diesel" | "super-unleaded" (default: "petrol")
+ *   radius_km  number  — search radius in km (default: 10, min: 0.1, max: 50)
  *
  * Response 200:
  *   {
@@ -352,7 +374,7 @@ router.post('/fuel-prices/nearby', async (req: Request, res: ExpressResponse) =>
     }
 
     const normalisedFuelType = (typeof fuel_type === 'string' ? fuel_type : 'petrol').toLowerCase()
-    const radiusKm = Math.min(Math.max(Number(radius_km) || 10, 1), 50)
+    const radiusKm = Math.min(Math.max(Number(radius_km) || 10, 0.1), 50)
 
     // --- Geocode the postcode ---
 
@@ -437,5 +459,12 @@ router.post('/fuel-prices/nearby', async (req: Request, res: ExpressResponse) =>
     res.status(500).json({ error: 'Internal server error' })
   }
 })
+
+/** Clears all in-memory caches. Exported for use in tests only. */
+export function clearCachesForTesting(): void {
+  priceCache.clear()
+  geocodeCache.clear()
+  feedInFlight = null
+}
 
 export default router

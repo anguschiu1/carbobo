@@ -125,7 +125,7 @@
               <p class="text-sm text-muted-foreground">{{ station.brand }}</p>
               <p class="text-sm">{{ station.address }}</p>
               <p class="text-sm text-muted-foreground">{{ station.postcode }}</p>
-              <p v-if="station.distance_km" class="text-xs text-muted-foreground mt-1">
+              <p v-if="station.distance_km != null" class="text-xs text-muted-foreground mt-1">
                 {{ station.distance_km.toFixed(1) }} km away
               </p>
             </div>
@@ -154,7 +154,7 @@
                     clip-rule="evenodd"
                   />
                 </svg>
-                Updated: {{ format(new Date(station.last_updated), 'MMM d, HH:mm') }}
+                Updated: {{ safeFormatDate(station.last_updated, 'MMM d, HH:mm') }}
               </p>
             </div>
           </div>
@@ -196,7 +196,8 @@
 <script setup lang="ts">
 // Page: Fuel Prices — let users search for nearby fuel prices by postcode
 import { ref, onMounted } from 'vue'
-import { format, differenceInHours } from 'date-fns'
+import { format, differenceInHours, isValid } from 'date-fns'
+import axios from 'axios'
 import apiClient from '@/api/client'
 import { useVehiclesStore } from '@/stores/vehicles'
 import { Card } from '@/components/ui/card'
@@ -214,7 +215,7 @@ interface FuelStation {
   postcode: string
   price_pence_per_litre: number
   last_updated: string
-  distance_km?: number
+  distance_km: number
 }
 
 const vehicleStore = useVehiclesStore()
@@ -267,11 +268,23 @@ function perTankCost(pricePencePerLitre: number): string {
 }
 
 /**
+ * Safely formats a date string using date-fns format.
+ * Returns the fallback string (default '—') when the input is not a valid date,
+ * preventing RangeError throws from malformed API date strings.
+ */
+function safeFormatDate(dateStr: string, formatStr: string, fallback = '—'): string {
+  const d = new Date(dateStr)
+  return isValid(d) ? format(d, formatStr) : fallback
+}
+
+/**
  * Returns true when a price's last_updated timestamp is more than 2 hours ago,
  * indicating the data may be stale and should be flagged to the user.
+ * Returns false for invalid date strings rather than throwing.
  */
 function isPriceStale(lastUpdated: string): boolean {
-  return differenceInHours(new Date(), new Date(lastUpdated)) > 2
+  const d = new Date(lastUpdated)
+  return isValid(d) && differenceInHours(new Date(), d) > 2
 }
 
 onMounted(() => {
@@ -304,8 +317,10 @@ async function handleSearch() {
     if (response.data.note) {
       apiNote.value = response.data.note
     }
-  } catch (err: any) {
-    error.value = err.response?.data?.error || 'Failed to fetch fuel prices'
+  } catch (err) {
+    error.value = axios.isAxiosError(err)
+      ? (err.response?.data?.error ?? 'Failed to fetch fuel prices')
+      : 'Failed to fetch fuel prices'
     stations.value = []
   } finally {
     loading.value = false
