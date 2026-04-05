@@ -72,7 +72,13 @@ router.post('/', (req: AuthRequest, res) => {
 
     const vehicleId = uuidv4()
     const now = new Date().toISOString()
-    const tankSize = Number(tank_size_litres) > 0 ? Math.round(Number(tank_size_litres)) : 50
+    if (tank_size_litres !== undefined) {
+      const n = Number(tank_size_litres)
+      if (!Number.isFinite(n) || !Number.isInteger(n) || n < 10 || n > 200) {
+        return res.status(400).json({ error: 'tank_size_litres must be a whole number between 10 and 200' })
+      }
+    }
+    const tankSize = tank_size_litres !== undefined ? Number(tank_size_litres) : 50
 
     db.prepare(
       `INSERT INTO vehicles (
@@ -129,7 +135,7 @@ router.put('/:id', (req: AuthRequest, res) => {
     }
 
     const updates: string[] = []
-    const values: any[] = []
+    const values: (string | number | null)[] = []
 
     if (vrm !== undefined) {
       updates.push('vrm = ?')
@@ -156,9 +162,12 @@ router.put('/:id', (req: AuthRequest, res) => {
       values.push(odometer_unit_default)
     }
     if (tank_size_litres !== undefined) {
-      const tankSize = Number(tank_size_litres) > 0 ? Math.round(Number(tank_size_litres)) : 50
+      const n = Number(tank_size_litres)
+      if (!Number.isFinite(n) || !Number.isInteger(n) || n < 10 || n > 200) {
+        return res.status(400).json({ error: 'tank_size_litres must be a whole number between 10 and 200' })
+      }
       updates.push('tank_size_litres = ?')
-      values.push(tankSize)
+      values.push(n)
     }
 
     if (updates.length === 0) {

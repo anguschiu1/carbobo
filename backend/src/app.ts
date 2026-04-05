@@ -20,6 +20,10 @@ if (!process.env.JWT_SECRET) {
 
 const app = express()
 
+// Trust one proxy hop so express-rate-limit reads the real client IP
+// from X-Forwarded-For rather than the load balancer/reverse proxy IP.
+app.set('trust proxy', 1)
+
 initDatabase()
 
 app.use(helmet())

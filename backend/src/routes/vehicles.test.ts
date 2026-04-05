@@ -69,7 +69,7 @@ describe('POST /api/vehicles', () => {
     expect(res.body.vehicle).toHaveProperty('tank_size_litres', 50)
   })
 
-  it('should return 201 and default tank_size_litres to 50 when an invalid value is provided', async () => {
+  it('should return 400 when tank_size_litres is out of range (0 is invalid)', async () => {
     const token = await registerAndLogin('vehicles-post-c@example.com', 'password123')
 
     const res = await request(app)
@@ -82,9 +82,29 @@ describe('POST /api/vehicles', () => {
         odometer_unit_default: 'miles',
         tank_size_litres: 0,
       })
-      .expect(201)
+      .expect(400)
 
-    expect(res.body.vehicle).toHaveProperty('tank_size_litres', 50)
+    expect(res.body).toHaveProperty('error')
+    expect(res.body.error).toMatch(/tank_size_litres/i)
+  })
+
+  it('should return 400 when tank_size_litres is above the maximum (200)', async () => {
+    const token = await registerAndLogin('vehicles-post-d@example.com', 'password123')
+
+    const res = await request(app)
+      .post('/api/vehicles')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        make: 'Ford',
+        model: 'Transit',
+        fuel_type_default: 'diesel',
+        odometer_unit_default: 'miles',
+        tank_size_litres: 999,
+      })
+      .expect(400)
+
+    expect(res.body).toHaveProperty('error')
+    expect(res.body.error).toMatch(/tank_size_litres/i)
   })
 
   it('should return 401 when no token is provided', async () => {

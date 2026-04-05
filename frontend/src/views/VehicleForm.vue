@@ -51,6 +51,17 @@
               </Select>
             </div>
           </div>
+          <div v-if="form.fuel_type_default !== 'electric'" class="space-y-2">
+            <Label for="tank_size_litres">Tank size (litres)</Label>
+            <Input
+              id="tank_size_litres"
+              v-model.number="form.tank_size_litres"
+              type="number"
+              :min="10"
+              :max="200"
+              placeholder="e.g., 50"
+            />
+          </div>
           <div v-if="error" class="text-sm text-destructive">{{ error }}</div>
           <div class="flex gap-2">
             <Button type="submit" :disabled="loading">
@@ -90,9 +101,11 @@ const form = ref<{
   vrm?: string
   fuel_type_default: FuelType
   odometer_unit_default: OdometerUnit
+  tank_size_litres?: number
 }>({
   fuel_type_default: 'petrol',
   odometer_unit_default: 'miles',
+  tank_size_litres: 50,
 })
 
 const yearInput = ref<string | null>(null)
@@ -108,6 +121,7 @@ onMounted(async () => {
         vrm: result.vehicle.vrm,
         fuel_type_default: result.vehicle.fuel_type_default,
         odometer_unit_default: result.vehicle.odometer_unit_default,
+        tank_size_litres: result.vehicle.tank_size_litres,
       }
       if (result.vehicle.year) {
         yearInput.value = `${result.vehicle.year}-01-01`

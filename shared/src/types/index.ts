@@ -20,7 +20,7 @@ export interface Vehicle {
   year?: number;
   fuel_type_default: FuelType;
   odometer_unit_default: OdometerUnit;
-  tank_size_litres?: number;  // default 50 if not set
+  tank_size_litres: number;   // NOT NULL DEFAULT 50 in DB — always present
   created_at: string;
   updated_at: string;
 }
