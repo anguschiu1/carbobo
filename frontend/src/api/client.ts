@@ -1,5 +1,6 @@
 import axios from 'axios'
 import type { AxiosInstance, AxiosError } from 'axios'
+import router from '@/router'
 
 // In dev with no VITE_API_URL, use /api so Vite proxy forwards to backend (avoids CORS)
 const API_URL = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? '/api' : 'http://localhost:3000/api')
@@ -31,7 +32,9 @@ apiClient.interceptors.response.use(
   (error: AxiosError) => {
     if (error.response?.status === 401) {
       localStorage.removeItem('token')
-      window.location.href = '/login'
+      // TODO: show toast notification — no toast system exists yet; wire up when one is added
+      console.warn('Session expired or unauthorised. Redirecting to login.')
+      router.push('/login')
     }
     return Promise.reject(error)
   }

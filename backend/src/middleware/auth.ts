@@ -13,7 +13,7 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
     return res.status(401).json({ error: 'Access token required' })
   }
 
-  const jwtSecret = process.env.JWT_SECRET || 'your-secret-key-change-in-production'
+  const jwtSecret = process.env.JWT_SECRET!
   
   jwt.verify(token, jwtSecret, (err, decoded) => {
     if (err) {

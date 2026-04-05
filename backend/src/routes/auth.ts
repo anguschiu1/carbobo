@@ -35,7 +35,7 @@ router.post('/register', async (req, res) => {
       now
     )
 
-    const jwtSecret = process.env.JWT_SECRET || 'your-secret-key-change-in-production'
+    const jwtSecret = process.env.JWT_SECRET!
     const expiresIn = process.env.JWT_EXPIRES_IN || '7d'
     const token = jwt.sign({ userId }, jwtSecret, { expiresIn } as jwt.SignOptions)
 
@@ -81,7 +81,7 @@ router.post('/login', async (req, res) => {
     }
 
     // Generate token
-    const jwtSecret = process.env.JWT_SECRET || 'your-secret-key-change-in-production'
+    const jwtSecret = process.env.JWT_SECRET!
     const expiresIn = process.env.JWT_EXPIRES_IN || '7d'
     const token = jwt.sign({ userId: user.id }, jwtSecret, { expiresIn } as jwt.SignOptions)
 
@@ -100,7 +100,7 @@ router.post('/login', async (req, res) => {
 })
 
 // Get current user
-router.get('/me', authenticateToken, async (req: AuthRequest, res) => {
+router.get('/me', authenticateToken, (req: AuthRequest, res) => {
   try {
     const userId = req.userId
     const user = db.prepare('SELECT id, email, created_at FROM users WHERE id = ?').get(userId) as {

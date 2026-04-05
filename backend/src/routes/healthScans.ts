@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { getDatabase } from '../db/index.js'
 import { param } from '../utils/params.js'
 import { authenticateToken, type AuthRequest } from '../middleware/auth.js'
+import { verifyVehicleOwnership } from '../middleware/vehicleOwnership.js'
 import { uploadHealthScanPhotos, getFileUrl } from '../utils/fileUpload.js'
 import { generateHealthScanAdvice } from '../services/healthScanAdvice.js'
 import type { HealthScan } from '@carbobo/shared'
@@ -13,17 +14,10 @@ const db = getDatabase()
 // All routes require authentication
 router.use(authenticateToken)
 
-// Helper to verify vehicle ownership
-function verifyVehicleOwnership(userId: string, vehicleId: string): boolean {
-  const vehicle = db
-    .prepare('SELECT id FROM vehicles WHERE id = ? AND owner_user_id = ?')
-    .get(vehicleId, userId)
-  return !!vehicle
-}
-
 // Create health scan with photo uploads
 router.post(
   '/:vehicleId/health-scans',
+  verifyVehicleOwnership,
   uploadHealthScanPhotos.fields([
     { name: 'tyre_photo', maxCount: 1 },
     { name: 'exterior_photo', maxCount: 1 },
@@ -31,12 +25,7 @@ router.post(
   ]),
   (req: AuthRequest, res) => {
     try {
-      const userId = req.userId!
       const vehicleId = param(req, 'vehicleId')
-
-      if (!verifyVehicleOwnership(userId, vehicleId)) {
-        return res.status(404).json({ error: 'Vehicle not found' })
-      }
 
       const files = req.files as { [fieldname: string]: Express.Multer.File[] }
       const {
@@ -113,14 +102,9 @@ router.post(
 )
 
 // Get health scans for vehicle
-router.get('/:vehicleId/health-scans', (req: AuthRequest, res) => {
+router.get('/:vehicleId/health-scans', verifyVehicleOwnership, (req: AuthRequest, res) => {
   try {
-    const userId = req.userId!
     const vehicleId = param(req, 'vehicleId')
-
-    if (!verifyVehicleOwnership(userId, vehicleId)) {
-      return res.status(404).json({ error: 'Vehicle not found' })
-    }
 
     const scans = db
       .prepare('SELECT * FROM health_scans WHERE vehicle_id = ? ORDER BY scan_at DESC')
@@ -140,15 +124,10 @@ router.get('/:vehicleId/health-scans', (req: AuthRequest, res) => {
 })
 
 // Get single health scan
-router.get('/:vehicleId/health-scans/:scanId', (req: AuthRequest, res) => {
+router.get('/:vehicleId/health-scans/:scanId', verifyVehicleOwnership, (req: AuthRequest, res) => {
   try {
-    const userId = req.userId!
     const vehicleId = param(req, 'vehicleId')
     const scanId = param(req, 'scanId')
-
-    if (!verifyVehicleOwnership(userId, vehicleId)) {
-      return res.status(404).json({ error: 'Vehicle not found' })
-    }
 
     const scan = db
       .prepare('SELECT * FROM health_scans WHERE id = ? AND vehicle_id = ?')
