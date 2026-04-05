@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import type { Request, Response as ExpressResponse, RequestInit } from 'express'
+import type { Request, Response as ExpressResponse } from 'express'
 import rateLimit from 'express-rate-limit'
 
 // Alias the Web Fetch API Response to avoid collision with Express Response

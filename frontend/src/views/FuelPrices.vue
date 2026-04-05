@@ -81,14 +81,15 @@
               id="radius"
               v-model.number="searchForm.radius_km"
               type="number"
-              :min="1"
+              :min="0.1"
+              :step="0.1"
               :max="50"
               required
             />
           </div>
         </div>
-        <Button type="submit" :disabled="loading" class="w-full md:w-auto">
-          {{ loading ? 'Searching...' : 'Search' }}
+        <Button type="submit" :disabled="loading || rateLimited" class="w-full md:w-auto">
+          {{ loading ? 'Searching...' : rateLimited ? 'Too many requests — wait 30s' : 'Search' }}
         </Button>
       </form>
     </Card>
@@ -259,13 +260,6 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import type { FuelType } from '@carbobo/shared'
 
-/** Local extension of Vehicle to accommodate the upcoming tank_size_litres field
- *  that backend-dev is adding to shared/src/types/index.ts. Once the shared type
- *  is updated this cast can be removed. */
-interface VehicleWithTankSize {
-  tank_size_litres?: number
-}
-
 interface FuelStation {
   id: string
   name: string
@@ -282,6 +276,7 @@ const LAST_POSTCODE_KEY = 'carbobo:last_postcode'
 const vehicleStore = useVehiclesStore()
 
 const loading = ref(false)
+const rateLimited = ref(false)
 // Hard errors only (network failures, 4xx/5xx responses)
 const error = ref('')
 // Informational API notes (e.g. "data temporarily unavailable")
@@ -309,10 +304,7 @@ const searchForm = ref<{
  * Computed tank size in litres, using the current vehicle's tank_size_litres if available.
  * Falls back to 50 L as a sensible UK average until the backend field is populated.
  */
-const tankSize = computed<number>(() => {
-  const vehicle = vehicleStore.currentVehicle as (typeof vehicleStore.currentVehicle & VehicleWithTankSize) | null
-  return vehicle?.tank_size_litres ?? 50
-})
+const tankSize = computed<number>(() => vehicleStore.currentVehicle?.tank_size_litres ?? 50)
 
 /**
  * Maps a vehicle FuelType to a search form fuel type string.
@@ -398,8 +390,11 @@ async function useMyLocation(): Promise<void> {
     } else {
       geoError.value = 'Location unavailable'
     }
-  } catch {
-    geoError.value = 'Location unavailable'
+  } catch (err) {
+    const code = (err as GeolocationPositionError).code
+    geoError.value = code === 1
+      ? 'Location permission denied — enable it in browser settings'
+      : 'Location unavailable — try entering your postcode'
   } finally {
     geoLoading.value = false
   }
@@ -446,9 +441,15 @@ async function handleSearch() {
       apiNote.value = response.data.note
     }
   } catch (err) {
-    error.value = axios.isAxiosError(err)
-      ? (err.response?.data?.error ?? 'Failed to fetch fuel prices')
-      : 'Failed to fetch fuel prices'
+    if (axios.isAxiosError(err) && err.response?.status === 429) {
+      error.value = 'Too many searches. Please wait 30 seconds before trying again.'
+      rateLimited.value = true
+      setTimeout(() => { rateLimited.value = false }, 30_000)
+    } else {
+      error.value = axios.isAxiosError(err)
+        ? (err.response?.data?.error ?? 'Failed to fetch fuel prices')
+        : 'Failed to fetch fuel prices'
+    }
     stations.value = []
   } finally {
     loading.value = false
