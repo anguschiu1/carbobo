@@ -47,6 +47,11 @@ export function initDatabase() {
       year INTEGER,
       fuel_type_default TEXT NOT NULL DEFAULT 'petrol',
       odometer_unit_default TEXT NOT NULL DEFAULT 'miles',
+      -- Migration note: added 2026-04-05 — tank_size_litres stores the fuel tank
+      -- capacity in litres. Defaults to 50 (a typical UK car). Used by the
+      -- FuelPrices feature to calculate per-tank cost estimates.
+      -- For existing databases, run: ALTER TABLE vehicles ADD COLUMN tank_size_litres INTEGER NOT NULL DEFAULT 50;
+      tank_size_litres INTEGER NOT NULL DEFAULT 50,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE
