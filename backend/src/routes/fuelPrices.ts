@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import type { Request, Response as ExpressResponse } from 'express'
+import type { Request, Response as ExpressResponse, RequestInit } from 'express'
 
 // Alias the Web Fetch API Response to avoid collision with Express Response
 type FetchResponse = Awaited<ReturnType<typeof fetch>>
@@ -23,7 +23,6 @@ interface FuelStation {
     price_pence_per_litre: number
     last_updated: string
   }[]
-  distance_km?: number
 }
 
 /** Shape returned to the frontend for a single station */
@@ -38,25 +37,34 @@ interface FuelStationResponse {
   distance_km: number
 }
 
-/** Raw entry from the gov.uk CMA open data JSON feed */
-interface GovUkStation {
+/**
+ * Station entry from GET /api/v1/pfs
+ *
+ * Based on the official Fuel Finder developer portal
+ * (developer.fuel-finder.service.gov.uk) and third-party integrations.
+ */
+interface FuelFinderStation {
   site_id: string
-  brand: string
-  address: string
-  postcode: string
-  location: {
-    latitude: number
-    longitude: number
-  }
-  prices: {
-    [fuelKey: string]: number // e.g. "E10": 145.9, "B7": 155.9
-  }
-  last_updated?: string
+  brand?: string
+  trading_name?: string
+  address?: string
+  postcode?: string
+  latitude: number
+  longitude: number
 }
 
-interface GovUkFeedResponse {
-  last_updated?: string
-  stations: GovUkStation[]
+/**
+ * Price entry from GET /api/v1/pfs/fuel-prices
+ * Each fuel type key (E10, E5, B7, SDV) maps to price + timestamp.
+ */
+interface FuelFinderPriceEntry {
+  site_id: string
+  prices: {
+    [fuelKey: string]: {
+      price: number
+      last_updated: string
+    }
+  }
 }
 
 /** postcodes.io response shape */
@@ -71,32 +79,48 @@ interface PostcodesIoResult {
 // ---------------------------------------------------------------------------
 
 /**
- * Gov.uk CMA mandatory fuel price transparency open data feed.
- * Published by DESNZ under the Competition and Markets Authority scheme (2023).
- * No authentication required. Updates approximately every 30 minutes.
- * See: https://www.gov.uk/guidance/access-fuel-price-data
+ * Official UK Government Fuel Finder API.
+ * Introduced by the Motor Fuel Price (Open Data) Regulations 2025, live from
+ * February 2026.  Requires OAuth2 client credentials (client_id + client_secret).
+ *
+ * Developer portal: https://www.developer.fuel-finder.service.gov.uk/
+ * Gov.uk guidance:  https://www.gov.uk/guidance/access-the-latest-fuel-prices-and-forecourt-data-via-api-or-email
+ *
+ * Previous URL (api.data.gov.uk/fuel-prices/opendata) was the old CMA voluntary
+ * scheme and is no longer active.
  */
-const GOV_UK_FEED_URL = 'https://api.data.gov.uk/fuel-prices/opendata'
+const FUEL_FINDER_BASE_URL = 'https://www.fuel-finder.service.gov.uk'
+const TOKEN_PATH     = '/api/v1/oauth/generate_access_token'
+const STATIONS_PATH  = '/api/v1/pfs'
+const PRICES_PATH    = '/api/v1/pfs/fuel-prices'
 
 /** postcodes.io — free, no-auth UK postcode geocoding service */
 const POSTCODES_IO_URL = 'https://api.postcodes.io/postcodes'
 
-/** The gov.uk feed uses these fuel key names */
+/**
+ * Fuel type codes used by the official Fuel Finder API.
+ *  E10 — standard unleaded petrol (10% ethanol)
+ *  E5  — super unleaded (5% ethanol, premium petrol)
+ *  B7  — standard diesel (7% FAME biodiesel blend)
+ *  SDV — super diesel (premium diesel)
+ */
 const FUEL_KEY_MAP: Record<string, string> = {
-  petrol: 'E10',   // standard petrol (10% ethanol blend)
-  diesel: 'B7',    // standard diesel (7% FAME blend)
+  petrol:          'E10',
+  diesel:          'B7',
   'super-unleaded': 'E5',
-  // lpg: 'SDV' — removed; SDV key is unverified against the real CMA feed schema.
-  //              Re-add with the confirmed key once validated.
+  'super-diesel':   'SDV',
 }
 
-const FETCH_TIMEOUT_MS = 5_000
+const FETCH_TIMEOUT_MS = 10_000
 
-/** Cache TTL for the gov.uk prices feed: 30 minutes */
+/** Cache TTL for price data: 30 minutes (API updates ~every 30 min) */
 const PRICES_CACHE_TTL_MS = 30 * 60 * 1_000
 
-/** Cache TTL for postcode geocoding results: 24 hours */
+/** Cache TTL for postcode geocoding: 24 hours */
 const GEOCODE_CACHE_TTL_MS = 24 * 60 * 60 * 1_000
+
+/** OAuth2 access token cache — tokens are typically valid for 1 hour */
+const TOKEN_EXPIRY_BUFFER_MS = 60_000  // refresh 60 s before expiry
 
 // ---------------------------------------------------------------------------
 // In-memory caches
@@ -107,11 +131,16 @@ interface CacheEntry<T> {
   expiresAt: number
 }
 
-const priceCache = new Map<string, CacheEntry<GovUkFeedResponse>>()
+/** Joined stations+prices data keyed by fuel type, e.g. "E10" */
+const priceCache = new Map<string, CacheEntry<FuelFinderStation[]>>()
 const geocodeCache = new Map<string, CacheEntry<PostcodesIoResult>>()
 
-/** In-flight Promise for the gov.uk feed, shared across concurrent cache-miss callers. */
-let feedInFlight: Promise<GovUkFeedResponse | null> | null = null
+/** In-flight Promise for each fuel type, to prevent thundering-herd cache misses. */
+const feedInFlight = new Map<string, Promise<FuelFinderStation[] | null>>()
+
+/** OAuth2 token state */
+let cachedToken: { token: string; expiresAt: number } | null = null
+let tokenInFlight: Promise<string | null> | null = null
 
 function getCached<T>(cache: Map<string, CacheEntry<T>>, key: string): T | null {
   const entry = cache.get(key)
@@ -135,11 +164,11 @@ function setCached<T>(cache: Map<string, CacheEntry<T>>, key: string, value: T, 
  * Creates an AbortController-based fetch with a timeout.
  * Node 20+ has native fetch; no external dependency required.
  */
-async function fetchWithTimeout(url: string, timeoutMs: number): Promise<FetchResponse> {
+async function fetchWithTimeout(url: string, timeoutMs: number, init?: RequestInit): Promise<FetchResponse> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    return await fetch(url, { signal: controller.signal })
+    return await fetch(url, { ...(init as object), signal: controller.signal })
   } finally {
     clearTimeout(timer)
   }
@@ -150,7 +179,7 @@ async function fetchWithTimeout(url: string, timeoutMs: number): Promise<FetchRe
  * Returns distance in kilometres.
  */
 function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371 // Earth radius in km
+  const R = 6371
   const toRad = (deg: number) => (deg * Math.PI) / 180
   const dLat = toRad(lat2 - lat1)
   const dLon = toRad(lon2 - lon1)
@@ -162,18 +191,88 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): nu
 
 /**
  * Validates a UK postcode format (not a lookup — just format check).
- * Allows common formats: SW1A 1AA, SW1A1AA, M1 1AE, etc.
  */
 function isValidUkPostcodeFormat(postcode: string): boolean {
   const cleaned = postcode.replace(/\s+/g, '').toUpperCase()
-  // Standard UK postcode regex (covers all valid formats)
   return /^[A-Z]{1,2}\d[A-Z\d]?\d[A-Z]{2}$/.test(cleaned)
 }
+
+// ---------------------------------------------------------------------------
+// OAuth2 token management
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns a valid OAuth2 Bearer token for the Fuel Finder API.
+ * Tokens are cached in memory and refreshed before expiry.
+ * Returns null if credentials are not configured or the token request fails.
+ */
+async function getAccessToken(): Promise<string | null> {
+  const clientId     = process.env.FUEL_FINDER_CLIENT_ID
+  const clientSecret = process.env.FUEL_FINDER_CLIENT_SECRET
+
+  if (!clientId || !clientSecret) {
+    console.warn('[fuelPrices] FUEL_FINDER_CLIENT_ID / FUEL_FINDER_CLIENT_SECRET not set')
+    return null
+  }
+
+  if (cachedToken && Date.now() < cachedToken.expiresAt - TOKEN_EXPIRY_BUFFER_MS) {
+    return cachedToken.token
+  }
+
+  // Share in-flight token request to avoid duplicate OAuth calls under load
+  if (tokenInFlight) return tokenInFlight
+
+  tokenInFlight = (async () => {
+    try {
+      const res = await fetchWithTimeout(
+        `${FUEL_FINDER_BASE_URL}${TOKEN_PATH}`,
+        FETCH_TIMEOUT_MS,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({
+            client_id: clientId,
+            client_secret: clientSecret,
+            grant_type: 'client_credentials',
+          }),
+        } as RequestInit,
+      )
+
+      if (!res.ok) {
+        console.error(`[fuelPrices] OAuth token request failed: HTTP ${res.status}`)
+        return null
+      }
+
+      const body = await res.json() as {
+        access_token?: string
+        expires_in?: number
+        token_type?: string
+      }
+
+      if (!body.access_token) {
+        console.error('[fuelPrices] OAuth response missing access_token')
+        return null
+      }
+
+      const expiresInMs = (body.expires_in ?? 3600) * 1000
+      cachedToken = { token: body.access_token, expiresAt: Date.now() + expiresInMs }
+      return cachedToken.token
+    } catch (err) {
+      console.error('[fuelPrices] OAuth token fetch error:', err)
+      return null
+    }
+  })().finally(() => { tokenInFlight = null })
+
+  return tokenInFlight
+}
+
+// ---------------------------------------------------------------------------
+// Geocoding
+// ---------------------------------------------------------------------------
 
 /**
  * Geocodes a UK postcode to lat/lon via postcodes.io.
  * Results are cached for 24 hours.
- * Throws an error with a user-friendly message on failure.
  */
 async function geocodePostcode(postcode: string): Promise<PostcodesIoResult> {
   const normalised = postcode.replace(/\s+/g, '').toUpperCase()
@@ -185,35 +284,30 @@ async function geocodePostcode(postcode: string): Promise<PostcodesIoResult> {
   let response: FetchResponse
   try {
     response = await fetchWithTimeout(url, FETCH_TIMEOUT_MS)
-  } catch (err) {
+  } catch {
     throw new Error('Postcode lookup service unavailable')
   }
 
-  if (response.status === 404) {
-    throw new Error('Postcode not found')
-  }
+  if (response.status === 404) throw new Error('Postcode not found')
+  if (!response.ok)            throw new Error('Postcode lookup service unavailable')
 
-  if (!response.ok) {
-    throw new Error('Postcode lookup service unavailable')
+  const body = await response.json() as {
+    status: number
+    result?: { latitude: number; longitude: number; postcode: string }
   }
-
-  const body = await response.json() as { status: number; result: { latitude: number; longitude: number; postcode: string } }
 
   if (body.result?.latitude == null || body.result?.longitude == null) {
     throw new Error('Postcode not found')
   }
 
   const result: PostcodesIoResult = {
-    latitude: body.result.latitude,
+    latitude:  body.result.latitude,
     longitude: body.result.longitude,
-    postcode: body.result.postcode,
+    postcode:  body.result.postcode,
   }
 
   setCached(geocodeCache, normalised, result, GEOCODE_CACHE_TTL_MS)
 
-  // Evict the oldest entry when the cache exceeds 10,000 postcodes to prevent
-  // unbounded memory growth (Map preserves insertion order, so .keys().next()
-  // yields the oldest key).
   if (geocodeCache.size > 10_000) {
     const firstKey = geocodeCache.keys().next().value
     if (firstKey !== undefined) geocodeCache.delete(firstKey)
@@ -222,110 +316,91 @@ async function geocodePostcode(postcode: string): Promise<PostcodesIoResult> {
   return result
 }
 
-/**
- * Fetches the gov.uk CMA fuel price feed and returns the parsed response.
- * The result is cached for 30 minutes.
- * Concurrent callers that arrive during a cache miss share a single outbound
- * request via `feedInFlight` to prevent a thundering herd against the feed URL.
- * Returns null if the feed is unavailable or returns unexpected data.
- */
-async function fetchGovUkFeed(): Promise<GovUkFeedResponse | null> {
-  const CACHE_KEY = 'govuk-feed'
+// ---------------------------------------------------------------------------
+// Fuel Finder API fetch
+// ---------------------------------------------------------------------------
 
-  const cached = getCached(priceCache, CACHE_KEY)
+/**
+ * Fetches stations and their prices from the official Fuel Finder API,
+ * joining the two endpoints on site_id.
+ *
+ * The joined list is cached per fuel-type key for 30 minutes.
+ * Concurrent cache-miss callers share one outbound pair of requests.
+ *
+ * Returns null if credentials are missing or the API is unavailable.
+ */
+async function fetchFuelFinderData(fuelKey: string): Promise<FuelFinderStation[] | null> {
+  const cacheKey = `fuel-finder-${fuelKey}`
+
+  const cached = getCached(priceCache, cacheKey)
   if (cached) return cached
 
-  // Share in-flight request across concurrent cache-miss callers.
-  if (feedInFlight) return feedInFlight
+  const existing = feedInFlight.get(cacheKey)
+  if (existing) return existing
 
-  feedInFlight = (async () => {
-    let response: FetchResponse
+  const inFlight = (async (): Promise<FuelFinderStation[] | null> => {
+    const token = await getAccessToken()
+    if (!token) return null
+
+    const headers = {
+      'Authorization': `Bearer ${token}`,
+      'Accept': 'application/json',
+      'User-Agent': 'Carbobo/1.0 (+https://github.com/anguschiu1/carbobo)',
+    }
+
+    let stationsRes: FetchResponse, pricesRes: FetchResponse
     try {
-      response = await fetchWithTimeout(GOV_UK_FEED_URL, FETCH_TIMEOUT_MS)
+      ;[stationsRes, pricesRes] = await Promise.all([
+        fetchWithTimeout(`${FUEL_FINDER_BASE_URL}${STATIONS_PATH}`, FETCH_TIMEOUT_MS, { headers } as RequestInit),
+        fetchWithTimeout(`${FUEL_FINDER_BASE_URL}${PRICES_PATH}`,   FETCH_TIMEOUT_MS, { headers } as RequestInit),
+      ])
     } catch (err) {
-      console.error('[fuelPrices] Gov.uk feed fetch failed (timeout or network error):', err)
+      console.error('[fuelPrices] Fuel Finder API fetch error:', err)
       return null
     }
 
-    if (!response.ok) {
-      console.error(`[fuelPrices] Gov.uk feed returned HTTP ${response.status}`)
+    if (!stationsRes.ok || !pricesRes.ok) {
+      console.error(`[fuelPrices] Fuel Finder API returned HTTP ${stationsRes.status} / ${pricesRes.status}`)
       return null
     }
 
-    let data: unknown
+    let stations: FuelFinderStation[], priceEntries: FuelFinderPriceEntry[]
     try {
-      data = await response.json()
+      stations     = (await stationsRes.json()) as FuelFinderStation[]
+      priceEntries = (await pricesRes.json())   as FuelFinderPriceEntry[]
     } catch (err) {
-      console.error('[fuelPrices] Gov.uk feed returned non-JSON response:', err)
+      console.error('[fuelPrices] Fuel Finder API returned non-JSON response:', err)
       return null
     }
 
-    // The CMA feed shape: { last_updated: string, stations: GovUkStation[] }
-    if (!data || typeof data !== 'object' || !Array.isArray((data as GovUkFeedResponse).stations)) {
-      console.error('[fuelPrices] Gov.uk feed returned unexpected shape:', JSON.stringify(data).slice(0, 200))
+    if (!Array.isArray(stations) || !Array.isArray(priceEntries)) {
+      console.error('[fuelPrices] Fuel Finder API returned unexpected shape')
       return null
     }
 
-    const feedData = data as GovUkFeedResponse
-    setCached(priceCache, CACHE_KEY, feedData, PRICES_CACHE_TTL_MS)
-    return feedData
-  })().finally(() => { feedInFlight = null })
+    // Build a price lookup map: site_id → price entry
+    const priceMap = new Map<string, FuelFinderPriceEntry>()
+    for (const entry of priceEntries) {
+      if (entry.site_id) priceMap.set(entry.site_id, entry)
+    }
 
-  return feedInFlight
-}
+    // Merge price data into station records (filter to stations that have this fuel type)
+    const merged: FuelFinderStation[] = []
+    for (const station of stations) {
+      const priceData = priceMap.get(station.site_id)
+      if (!priceData?.prices?.[fuelKey]) continue
+      // Attach prices to the station object for use downstream
+      ;(station as FuelFinderStation & { _prices?: FuelFinderPriceEntry['prices'] })._prices =
+        priceData.prices
+      merged.push(station)
+    }
 
-/**
- * Converts a gov.uk feed station entry to the internal FuelStation shape.
- * Returns null if the station lacks valid location data.
- */
-function govUkStationToFuelStation(raw: GovUkStation, feedLastUpdated?: string): FuelStation | null {
-  const { location } = raw
-  if (
-    typeof location?.latitude !== 'number' ||
-    typeof location?.longitude !== 'number' ||
-    !isFinite(location.latitude) ||
-    !isFinite(location.longitude)
-  ) {
-    return null
-  }
+    setCached(priceCache, cacheKey, merged, PRICES_CACHE_TTL_MS)
+    return merged
+  })().finally(() => { feedInFlight.delete(cacheKey) })
 
-  const lastUpdated = raw.last_updated ?? feedLastUpdated ?? new Date().toISOString()
-
-  const prices = Object.entries(raw.prices ?? {}).map(([key, ppl]) => ({
-    fuel_type: key,
-    price_pence_per_litre: ppl,
-    last_updated: lastUpdated,
-  }))
-
-  return {
-    id: raw.site_id,
-    name: raw.address ?? raw.brand,
-    brand: raw.brand ?? 'Unknown',
-    address: raw.address ?? '',
-    postcode: raw.postcode ?? '',
-    latitude: location.latitude,
-    longitude: location.longitude,
-    prices,
-  }
-}
-
-/**
- * Looks up the price for the requested fuel type from a station's price list.
- * The gov.uk feed uses product codes (E10, B7) rather than plain names, so we
- * accept both the mapped code and the raw fuel_type string.
- */
-function stationPriceForFuelType(
-  station: FuelStation,
-  fuelType: string,
-): { price_pence_per_litre: number; last_updated: string } | null {
-  const govKey = FUEL_KEY_MAP[fuelType.toLowerCase()]
-
-  const match =
-    station.prices.find((p) => p.fuel_type === govKey) ??
-    station.prices.find((p) => p.fuel_type.toLowerCase() === fuelType.toLowerCase())
-
-  if (!match) return null
-  return { price_pence_per_litre: match.price_pence_per_litre, last_updated: match.last_updated }
+  feedInFlight.set(cacheKey, inFlight)
+  return inFlight
 }
 
 // ---------------------------------------------------------------------------
@@ -335,23 +410,27 @@ function stationPriceForFuelType(
 /**
  * POST /api/fuel-prices/nearby
  *
- * Auth: none required
+ * Auth: none required (public endpoint)
  *
  * Request body:
  *   postcode   string  — UK postcode (e.g. "SW1A 1AA")
- *   fuel_type  string  — "petrol" | "diesel" | "super-unleaded" (default: "petrol")
+ *   fuel_type  string  — "petrol" | "diesel" | "super-unleaded" | "super-diesel"
+ *                        (default: "petrol")
  *   radius_km  number  — search radius in km (default: 10, min: 0.1, max: 50)
  *
  * Response 200:
  *   {
- *     stations: FuelStationResponse[]  — sorted by price ascending, then distance
- *     postcode: string
+ *     stations:  FuelStationResponse[]  — sorted cheapest first, then by distance
+ *     postcode:  string
  *     fuel_type: string
- *     note?: string
+ *     note?:     string                  — present when data is temporarily unavailable
  *   }
  *
  * Response 400: invalid or unknown postcode
  * Response 500: unexpected server error
+ *
+ * Requires env vars: FUEL_FINDER_CLIENT_ID, FUEL_FINDER_CLIENT_SECRET
+ * Obtain credentials at: https://www.developer.fuel-finder.service.gov.uk/
  */
 router.post('/fuel-prices/nearby', async (req: Request, res: ExpressResponse) => {
   try {
@@ -376,6 +455,8 @@ router.post('/fuel-prices/nearby', async (req: Request, res: ExpressResponse) =>
     const normalisedFuelType = (typeof fuel_type === 'string' ? fuel_type : 'petrol').toLowerCase()
     const radiusKm = Math.min(Math.max(Number(radius_km) || 10, 0.1), 50)
 
+    const fuelKey = FUEL_KEY_MAP[normalisedFuelType]
+
     // --- Geocode the postcode ---
 
     let origin: PostcodesIoResult
@@ -386,63 +467,70 @@ router.post('/fuel-prices/nearby', async (req: Request, res: ExpressResponse) =>
       if (message === 'Postcode not found') {
         return res.status(400).json({ error: 'Postcode not found' })
       }
-      // Geocoder unavailable — return empty graceful response
       console.warn('[fuelPrices] Postcode geocode unavailable:', message)
       return res.json({
-        stations: [],
-        postcode: trimmedPostcode.toUpperCase(),
+        stations:  [],
+        postcode:  trimmedPostcode.toUpperCase(),
         fuel_type: normalisedFuelType,
         note: 'Fuel price data temporarily unavailable. Please check back later.',
       })
     }
 
-    // --- Fetch the gov.uk price feed ---
+    // --- Fetch Fuel Finder data ---
 
-    const feed = await fetchGovUkFeed()
+    const stations = await fetchFuelFinderData(fuelKey ?? normalisedFuelType)
 
-    if (!feed) {
-      console.warn('[fuelPrices] Gov.uk feed unavailable — returning empty result')
+    if (!stations) {
+      const note = !process.env.FUEL_FINDER_CLIENT_ID
+        ? 'Fuel price API credentials not configured. Set FUEL_FINDER_CLIENT_ID and FUEL_FINDER_CLIENT_SECRET.'
+        : 'Fuel price data temporarily unavailable. Please check back later.'
+
+      console.warn('[fuelPrices] Fuel Finder data unavailable — returning empty result')
       return res.json({
-        stations: [],
-        postcode: origin.postcode,
+        stations:  [],
+        postcode:  origin.postcode,
         fuel_type: normalisedFuelType,
-        note: 'Fuel price data temporarily unavailable. Please check back later.',
+        note,
       })
     }
 
-    // --- Filter, annotate with distance, sort ---
+    // --- Filter by radius, annotate distance, sort ---
 
     const nearby: FuelStationResponse[] = []
 
-    for (const raw of feed.stations) {
-      const station = govUkStationToFuelStation(raw, feed.last_updated)
-      if (!station) continue
+    for (const station of stations) {
+      if (
+        typeof station.latitude  !== 'number' || !isFinite(station.latitude)  ||
+        typeof station.longitude !== 'number' || !isFinite(station.longitude)
+      ) continue
 
       const distanceKm = haversineKm(
-        origin.latitude,
-        origin.longitude,
-        station.latitude,
-        station.longitude,
+        origin.latitude, origin.longitude,
+        station.latitude, station.longitude,
       )
 
       if (distanceKm > radiusKm) continue
 
-      const priceData = stationPriceForFuelType(station, normalisedFuelType)
-      if (!priceData) continue // station doesn't sell the requested fuel type
+      const pricesData = (station as FuelFinderStation & {
+        _prices?: FuelFinderPriceEntry['prices']
+      })._prices
+
+      const priceEntry = pricesData?.[fuelKey ?? normalisedFuelType]
+      if (!priceEntry) continue
 
       nearby.push({
-        id: station.id,
-        name: station.name,
-        brand: station.brand,
-        address: station.address,
-        postcode: station.postcode,
-        price_pence_per_litre: priceData.price_pence_per_litre,
-        last_updated: priceData.last_updated,
-        distance_km: Math.round(distanceKm * 10) / 10,
+        id:                    station.site_id,
+        name:                  station.trading_name ?? station.address ?? station.brand ?? 'Unknown',
+        brand:                 station.brand ?? 'Unknown',
+        address:               station.address ?? '',
+        postcode:              station.postcode ?? '',
+        price_pence_per_litre: priceEntry.price,
+        last_updated:          priceEntry.last_updated,
+        distance_km:           Math.round(distanceKm * 10) / 10,
       })
     }
 
-    // Sort: cheapest first, then by distance for ties
+    // Sort cheapest first, then by distance for ties
     nearby.sort((a, b) => {
       const priceDiff = a.price_pence_per_litre - b.price_pence_per_litre
       if (priceDiff !== 0) return priceDiff
@@ -450,8 +538,8 @@ router.post('/fuel-prices/nearby', async (req: Request, res: ExpressResponse) =>
     })
 
     return res.json({
-      stations: nearby,
-      postcode: origin.postcode,
+      stations:  nearby,
+      postcode:  origin.postcode,
       fuel_type: normalisedFuelType,
     })
   } catch (error) {
@@ -460,11 +548,13 @@ router.post('/fuel-prices/nearby', async (req: Request, res: ExpressResponse) =>
   }
 })
 
-/** Clears all in-memory caches. Exported for use in tests only. */
+/** Clears all in-memory caches and resets OAuth token state. For use in tests only. */
 export function clearCachesForTesting(): void {
   priceCache.clear()
   geocodeCache.clear()
-  feedInFlight = null
+  feedInFlight.clear()
+  cachedToken    = null
+  tokenInFlight  = null
 }
 
 export default router

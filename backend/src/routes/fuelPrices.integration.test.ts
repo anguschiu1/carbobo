@@ -1,6 +1,6 @@
 /**
  * Integration tests for the Fuel Prices feature — these make REAL HTTP requests
- * to external services (api.data.gov.uk and postcodes.io).
+ * to external services (fuel-finder.service.gov.uk and postcodes.io).
  *
  * They are SKIPPED by default to avoid flakiness in CI and in air-gapped
  * environments.  Run them manually when you want to verify the external APIs
@@ -8,17 +8,25 @@
  *
  *   INTEGRATION=1 pnpm --filter backend test -- fuelPrices.integration
  *
+ * Prerequisites
+ * -------------
+ * Set credentials in backend/.env before running:
+ *   FUEL_FINDER_CLIENT_ID=<your-client-id>
+ *   FUEL_FINDER_CLIENT_SECRET=<your-client-secret>
+ *
+ * Obtain credentials at: https://www.developer.fuel-finder.service.gov.uk/
+ *
  * What they verify
  * ----------------
- *  1. postcodes.io   — geocoding a known UK postcode returns valid lat/lon
- *  2. api.data.gov.uk — the CMA open data feed is reachable and returns a
- *                       response with `{ stations: [...] }` containing
- *                       the fields the backend relies on
- *  3. Full end-to-end — POST /api/fuel-prices/nearby with a real postcode
- *                       returns the expected response shape from the live feed
+ *  1. postcodes.io              — geocoding a known UK postcode returns valid lat/lon
+ *  2. Fuel Finder OAuth2 token  — client credentials exchange returns a Bearer token
+ *  3. /api/v1/pfs               — stations endpoint returns an array with expected fields
+ *  4. /api/v1/pfs/fuel-prices   — prices endpoint returns an array with expected fields
+ *  5. Full end-to-end           — POST /api/fuel-prices/nearby with a real postcode
  *
- * NOTE: If the gov.uk feed URL changes, these tests will catch it first.
- * The URL is defined in fuelPrices.ts as GOV_UK_FEED_URL.
+ * NOTE: The official API is defined by the Motor Fuel Price (Open Data)
+ * Regulations 2025, live from February 2026.
+ * Developer portal: https://www.developer.fuel-finder.service.gov.uk/
  */
 
 import { describe, it, expect, beforeAll } from 'vitest'
@@ -109,41 +117,128 @@ describe.skipIf(!RUN_INTEGRATION)('postcodes.io API (live)', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 2. gov.uk CMA open data feed contract
+// 2. Fuel Finder OAuth2 token
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!RUN_INTEGRATION)('gov.uk CMA fuel price feed (live)', () => {
+describe.skipIf(!RUN_INTEGRATION)('Fuel Finder OAuth2 token (live)', () => {
   it(
-    'should be reachable and return a response with a stations array',
+    'should exchange client credentials for a Bearer token',
     async () => {
-      const res = await fetch('https://api.data.gov.uk/fuel-prices/opendata', {
+      const clientId     = process.env.FUEL_FINDER_CLIENT_ID
+      const clientSecret = process.env.FUEL_FINDER_CLIENT_SECRET
+
+      if (!clientId || !clientSecret) {
+        throw new Error('FUEL_FINDER_CLIENT_ID and FUEL_FINDER_CLIENT_SECRET must be set to run this test')
+      }
+
+      const res = await fetch(
+        'https://www.fuel-finder.service.gov.uk/api/v1/oauth/generate_access_token',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({
+            client_id: clientId,
+            client_secret: clientSecret,
+            grant_type: 'client_credentials',
+          }),
+          signal: AbortSignal.timeout(EXTERNAL_TIMEOUT_MS),
+        },
+      )
+
+      expect(res.ok).toBe(true)
+      expect(res.status).toBe(200)
+
+      const body = (await res.json()) as {
+        access_token?: string
+        expires_in?: number
+        token_type?: string
+      }
+
+      expect(typeof body.access_token).toBe('string')
+      expect((body.access_token ?? '').length).toBeGreaterThan(0)
+      expect(typeof body.expires_in).toBe('number')
+    },
+    EXTERNAL_TIMEOUT_MS,
+  )
+})
+
+// ---------------------------------------------------------------------------
+// 3. Fuel Finder stations + prices endpoints
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!RUN_INTEGRATION)('Fuel Finder stations & prices endpoints (live)', () => {
+  let bearerToken: string
+
+  beforeAll(async () => {
+    const clientId     = process.env.FUEL_FINDER_CLIENT_ID
+    const clientSecret = process.env.FUEL_FINDER_CLIENT_SECRET
+    if (!clientId || !clientSecret) return
+
+    const res = await fetch(
+      'https://www.fuel-finder.service.gov.uk/api/v1/oauth/generate_access_token',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, grant_type: 'client_credentials' }),
+        signal: AbortSignal.timeout(EXTERNAL_TIMEOUT_MS),
+      },
+    )
+    const body = (await res.json()) as { access_token?: string }
+    bearerToken = body.access_token ?? ''
+  })
+
+  it(
+    'should return an array of stations from /api/v1/pfs with expected fields',
+    async () => {
+      if (!bearerToken) throw new Error('Could not obtain token — check credentials')
+
+      const res = await fetch('https://www.fuel-finder.service.gov.uk/api/v1/pfs', {
+        headers: { 'Authorization': `Bearer ${bearerToken}`, 'Accept': 'application/json' },
         signal: AbortSignal.timeout(EXTERNAL_TIMEOUT_MS),
       })
 
-      // The feed may require auth (API key) — 401/403 also tells us the URL is correct
-      expect([200, 401, 403]).toContain(res.status)
+      expect(res.ok).toBe(true)
+      const stations = (await res.json()) as unknown[]
+      expect(Array.isArray(stations)).toBe(true)
+      expect(stations.length).toBeGreaterThan(0)
 
-      if (res.ok) {
-        const body = (await res.json()) as { stations?: unknown[]; last_updated?: string }
-        expect(Array.isArray(body.stations)).toBe(true)
+      const first = stations[0] as Record<string, unknown>
+      expect(first).toHaveProperty('site_id')
+      expect(first).toHaveProperty('brand')
+      expect(first).toHaveProperty('postcode')
+      expect(typeof first.latitude).toBe('number')
+      expect(typeof first.longitude).toBe('number')
+    },
+    EXTERNAL_TIMEOUT_MS,
+  )
 
-        if (body.stations && body.stations.length > 0) {
-          const first = body.stations[0] as Record<string, unknown>
+  it(
+    'should return an array of price entries from /api/v1/pfs/fuel-prices with expected fields',
+    async () => {
+      if (!bearerToken) throw new Error('Could not obtain token — check credentials')
 
-          // Required fields the backend reads
-          expect(first).toHaveProperty('site_id')
-          expect(first).toHaveProperty('brand')
-          expect(first).toHaveProperty('postcode')
-          expect(first).toHaveProperty('location')
+      const res = await fetch('https://www.fuel-finder.service.gov.uk/api/v1/pfs/fuel-prices', {
+        headers: { 'Authorization': `Bearer ${bearerToken}`, 'Accept': 'application/json' },
+        signal: AbortSignal.timeout(EXTERNAL_TIMEOUT_MS),
+      })
 
-          const location = first.location as Record<string, unknown>
-          expect(typeof location.latitude).toBe('number')
-          expect(typeof location.longitude).toBe('number')
+      expect(res.ok).toBe(true)
+      const prices = (await res.json()) as unknown[]
+      expect(Array.isArray(prices)).toBe(true)
+      expect(prices.length).toBeGreaterThan(0)
 
-          expect(first).toHaveProperty('prices')
-          expect(typeof first.prices).toBe('object')
-        }
-      }
+      const first = prices[0] as Record<string, unknown>
+      expect(first).toHaveProperty('site_id')
+      expect(first).toHaveProperty('prices')
+      expect(typeof first.prices).toBe('object')
+
+      // At least one fuel type entry should have price + last_updated
+      const priceObj = first.prices as Record<string, unknown>
+      const firstFuelKey = Object.keys(priceObj)[0]
+      expect(firstFuelKey).toBeDefined()
+      const entry = priceObj[firstFuelKey] as Record<string, unknown>
+      expect(typeof entry.price).toBe('number')
+      expect(typeof entry.last_updated).toBe('string')
     },
     EXTERNAL_TIMEOUT_MS,
   )

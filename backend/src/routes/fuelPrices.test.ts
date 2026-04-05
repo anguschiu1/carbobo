@@ -1,11 +1,17 @@
 /**
  * Tests for POST /api/fuel-prices/nearby
  *
- * NOTE FOR backend-dev: The fuelPrices route is documented as "Auth: none required",
- * but in practice all requests to /api/* pass through the reminderRoutes router which
- * applies `router.use(authenticateToken)` globally. This means unauthenticated requests
- * to /api/fuel-prices/nearby currently return 401. These tests therefore authenticate
- * with a real token. See TESTABILITY.md recommendation for the fix.
+ * The route calls three external services:
+ *   1. fuel-finder.service.gov.uk/api/v1/oauth/generate_access_token  (OAuth2 token)
+ *   2. fuel-finder.service.gov.uk/api/v1/pfs                          (station list)
+ *   3. fuel-finder.service.gov.uk/api/v1/pfs/fuel-prices               (price list)
+ *   4. api.postcodes.io/postcodes/:postcode                             (geocoding)
+ *
+ * All external calls are stubbed via vi.stubGlobal('fetch', ...).
+ *
+ * NOTE: The route is documented as "Auth: none required" but all /api/* requests
+ * pass through reminderRoutes which applies authenticateToken globally.  Every
+ * test therefore carries a valid JWT obtained in beforeAll.
  */
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest'
 import request from 'supertest'
@@ -14,7 +20,19 @@ import { getDatabase } from '../db/index.js'
 import { clearCachesForTesting } from './fuelPrices.js'
 
 // ---------------------------------------------------------------------------
-// Shared mock data
+// Env vars — ensure credentials are set so the route doesn't short-circuit
+// ---------------------------------------------------------------------------
+
+const ORIG_CLIENT_ID     = process.env.FUEL_FINDER_CLIENT_ID
+const ORIG_CLIENT_SECRET = process.env.FUEL_FINDER_CLIENT_SECRET
+
+beforeAll(() => {
+  process.env.FUEL_FINDER_CLIENT_ID     = 'test-client-id'
+  process.env.FUEL_FINDER_CLIENT_SECRET = 'test-client-secret'
+})
+
+// ---------------------------------------------------------------------------
+// Mock data
 // ---------------------------------------------------------------------------
 
 const MOCK_GEOCODE_RESULT = {
@@ -22,53 +40,77 @@ const MOCK_GEOCODE_RESULT = {
   result: { latitude: 51.5014, longitude: -0.1419, postcode: 'SW1A 1AA' },
 }
 
-/**
- * Three stations at varying distances from origin (51.5014, -0.1419):
- *
- *  Station A — ~0.10 km — petrol 149.9 p/L  (closest, mid-price)
- *  Station B — ~1.20 km — petrol 145.9 p/L  (cheapest, farthest)
- *  Station C — ~0.61 km — petrol 155.9 p/L  (most expensive)
- *
- * The route clamps radius_km to a minimum of 1 km, so to test radius
- * exclusion of station-b a radius of 1.1 km is used: it includes A and C
- * (both within 1.1 km) but excludes B (~1.20 km).
- */
-const MOCK_GOV_UK_FEED = {
-  last_updated: '2026-04-04T10:00:00Z',
-  stations: [
-    {
-      site_id: 'station-a',
-      brand: 'Shell',
-      address: '1 The Mall, London',
-      postcode: 'SW1A 2AP',
-      location: { latitude: 51.5023, longitude: -0.1421 }, // ~0.10 km from origin
-      prices: { E10: 149.9, B7: 160.9 },
-      last_updated: '2026-04-04T09:00:00Z',
-    },
-    {
-      site_id: 'station-b',
-      brand: 'BP',
-      address: '2 Whitehall, London',
-      postcode: 'SW1A 2HE',
-      location: { latitude: 51.5040, longitude: -0.1250 }, // ~1.20 km from origin
-      prices: { E10: 145.9, B7: 156.9 },
-      last_updated: '2026-04-04T09:00:00Z',
-    },
-    {
-      site_id: 'station-c',
-      brand: 'Esso',
-      address: '3 Victoria Street, London',
-      postcode: 'SW1H 0ET',
-      location: { latitude: 51.4975, longitude: -0.1357 }, // ~0.61 km from origin
-      prices: { E10: 155.9, B7: 165.9 },
-      last_updated: '2026-04-04T09:00:00Z',
-    },
-  ],
+const MOCK_TOKEN_RESPONSE = {
+  access_token: 'mock-bearer-token',
+  expires_in: 3600,
+  token_type: 'Bearer',
 }
 
 /**
- * Returns a minimal mock Response object with the given JSON body and status.
+ * Three stations at varying distances from origin (51.5014, -0.1419):
+ *
+ *  Station A — ~0.10 km — petrol (E10) 149.9 p/L, diesel (B7) 160.9 p/L
+ *  Station B — ~1.20 km — petrol (E10) 145.9 p/L, diesel (B7) 156.9 p/L
+ *  Station C — ~0.61 km — petrol (E10) 155.9 p/L, diesel (B7) 165.9 p/L
  */
+const MOCK_STATIONS = [
+  {
+    site_id: 'station-a',
+    brand: 'Shell',
+    trading_name: 'Shell The Mall',
+    address: '1 The Mall, London',
+    postcode: 'SW1A 2AP',
+    latitude: 51.5023,
+    longitude: -0.1421,
+  },
+  {
+    site_id: 'station-b',
+    brand: 'BP',
+    trading_name: 'BP Whitehall',
+    address: '2 Whitehall, London',
+    postcode: 'SW1A 2HE',
+    latitude: 51.5040,
+    longitude: -0.1250,
+  },
+  {
+    site_id: 'station-c',
+    brand: 'Esso',
+    trading_name: 'Esso Victoria',
+    address: '3 Victoria Street, London',
+    postcode: 'SW1H 0ET',
+    latitude: 51.4975,
+    longitude: -0.1357,
+  },
+]
+
+const MOCK_PRICES = [
+  {
+    site_id: 'station-a',
+    prices: {
+      E10: { price: 149.9, last_updated: '2026-04-04T09:00:00Z' },
+      B7:  { price: 160.9, last_updated: '2026-04-04T09:00:00Z' },
+    },
+  },
+  {
+    site_id: 'station-b',
+    prices: {
+      E10: { price: 145.9, last_updated: '2026-04-04T09:00:00Z' },
+      B7:  { price: 156.9, last_updated: '2026-04-04T09:00:00Z' },
+    },
+  },
+  {
+    site_id: 'station-c',
+    prices: {
+      E10: { price: 155.9, last_updated: '2026-04-04T09:00:00Z' },
+      B7:  { price: 165.9, last_updated: '2026-04-04T09:00:00Z' },
+    },
+  },
+]
+
+// ---------------------------------------------------------------------------
+// Fetch mock helpers
+// ---------------------------------------------------------------------------
+
 function mockJsonResponse(body: unknown, status = 200): Response {
   return {
     ok: status >= 200 && status < 300,
@@ -79,38 +121,59 @@ function mockJsonResponse(body: unknown, status = 200): Response {
 }
 
 /**
- * Stubs global fetch so that:
- *  - postcodes.io requests return the mock geocode result (or an override)
- *  - api.data.gov.uk requests return the mock feed (or an override)
+ * Stubs global fetch to return mocks for all three Fuel Finder API calls +
+ * postcodes.io.  Individual responses can be overridden via `overrides`.
  */
 function setupFetchMock(overrides?: {
   geocodeStatus?: number
   geocodeBody?: unknown
-  feedStatus?: number
-  feedBody?: unknown
+  tokenStatus?: number
+  tokenBody?: unknown
+  stationsStatus?: number
+  stationsBody?: unknown
+  pricesStatus?: number
+  pricesBody?: unknown
 }): void {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string) => {
-      const urlStr = String(url)
-      if (urlStr.includes('postcodes.io')) {
-        const status = overrides?.geocodeStatus ?? 200
-        const body = overrides?.geocodeBody ?? MOCK_GEOCODE_RESULT
-        return mockJsonResponse(body, status)
+      const u = String(url)
+
+      if (u.includes('postcodes.io')) {
+        return mockJsonResponse(
+          overrides?.geocodeBody  ?? MOCK_GEOCODE_RESULT,
+          overrides?.geocodeStatus ?? 200,
+        )
       }
-      if (urlStr.includes('api.data.gov.uk') || urlStr.includes('fuel-prices')) {
-        const status = overrides?.feedStatus ?? 200
-        const body = overrides?.feedBody ?? MOCK_GOV_UK_FEED
-        return mockJsonResponse(body, status)
+
+      if (u.includes('oauth') || u.includes('generate_access_token')) {
+        return mockJsonResponse(
+          overrides?.tokenBody  ?? MOCK_TOKEN_RESPONSE,
+          overrides?.tokenStatus ?? 200,
+        )
       }
-      throw new Error(`Unexpected fetch call to: ${urlStr}`)
+
+      if (u.includes('/api/v1/pfs/fuel-prices')) {
+        return mockJsonResponse(
+          overrides?.pricesBody  ?? MOCK_PRICES,
+          overrides?.pricesStatus ?? 200,
+        )
+      }
+
+      if (u.includes('/api/v1/pfs')) {
+        return mockJsonResponse(
+          overrides?.stationsBody  ?? MOCK_STATIONS,
+          overrides?.stationsStatus ?? 200,
+        )
+      }
+
+      throw new Error(`Unexpected fetch call to: ${u}`)
     }),
   )
 }
 
 // ---------------------------------------------------------------------------
-// Auth helper — the /api/* mount order causes reminderRoutes auth middleware
-// to intercept all /api requests, so every test must carry a valid JWT.
+// Auth helper
 // ---------------------------------------------------------------------------
 
 let authToken: string
@@ -138,10 +201,13 @@ describe('POST /api/fuel-prices/nearby', () => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
     clearCachesForTesting()
+    // Restore env vars in case a test changed them
+    process.env.FUEL_FINDER_CLIENT_ID     = 'test-client-id'
+    process.env.FUEL_FINDER_CLIENT_SECRET = 'test-client-secret'
   })
 
   // -------------------------------------------------------------------------
-  // Input validation — these never reach the fetch layer
+  // Input validation
   // -------------------------------------------------------------------------
 
   describe('input validation', () => {
@@ -202,13 +268,11 @@ describe('POST /api/fuel-prices/nearby', () => {
   })
 
   // -------------------------------------------------------------------------
-  // Happy path — valid requests with mocked external services
+  // Successful responses
   // -------------------------------------------------------------------------
 
   describe('successful responses', () => {
-    beforeEach(() => {
-      setupFetchMock()
-    })
+    beforeEach(() => setupFetchMock())
 
     it('should return 200 with stations array and postcode field for a valid request', async () => {
       const res = await request(app)
@@ -240,7 +304,6 @@ describe('POST /api/fuel-prices/nearby', () => {
         .send({ postcode: 'SW1A 1AA' })
         .expect(200)
 
-      expect(res.body).toHaveProperty('stations')
       expect(Array.isArray(res.body.stations)).toBe(true)
     })
 
@@ -256,13 +319,11 @@ describe('POST /api/fuel-prices/nearby', () => {
   })
 
   // -------------------------------------------------------------------------
-  // Response shape for each station
+  // Response shape
   // -------------------------------------------------------------------------
 
   describe('response shape', () => {
-    beforeEach(() => {
-      setupFetchMock()
-    })
+    beforeEach(() => setupFetchMock())
 
     it('should include all required fields on each station object', async () => {
       const res = await request(app)
@@ -275,29 +336,14 @@ describe('POST /api/fuel-prices/nearby', () => {
       expect(res.body.stations.length).toBeGreaterThan(0)
 
       for (const station of res.body.stations as Record<string, unknown>[]) {
-        expect(station).toHaveProperty('id')
         expect(typeof station.id).toBe('string')
-
-        expect(station).toHaveProperty('name')
         expect(typeof station.name).toBe('string')
-
-        expect(station).toHaveProperty('brand')
         expect(typeof station.brand).toBe('string')
-
-        expect(station).toHaveProperty('address')
         expect(typeof station.address).toBe('string')
-
-        expect(station).toHaveProperty('postcode')
         expect(typeof station.postcode).toBe('string')
-
-        expect(station).toHaveProperty('price_pence_per_litre')
         expect(typeof station.price_pence_per_litre).toBe('number')
         expect(station.price_pence_per_litre as number).toBeGreaterThan(0)
-
-        expect(station).toHaveProperty('last_updated')
         expect(typeof station.last_updated).toBe('string')
-
-        expect(station).toHaveProperty('distance_km')
         expect(typeof station.distance_km).toBe('number')
         expect(station.distance_km as number).toBeGreaterThanOrEqual(0)
       }
@@ -309,9 +355,7 @@ describe('POST /api/fuel-prices/nearby', () => {
   // -------------------------------------------------------------------------
 
   describe('sorting', () => {
-    beforeEach(() => {
-      setupFetchMock()
-    })
+    beforeEach(() => setupFetchMock())
 
     it('should return stations sorted cheapest first when multiple stations are returned', async () => {
       const res = await request(app)
@@ -339,7 +383,6 @@ describe('POST /api/fuel-prices/nearby', () => {
 
       const stations = res.body.stations as { price_pence_per_litre: number; id: string }[]
       expect(stations.length).toBeGreaterThan(0)
-      // Station B has the lowest mock petrol price (145.9 p/L via E10 key)
       expect(stations[0].id).toBe('station-b')
       expect(stations[0].price_pence_per_litre).toBe(145.9)
     })
@@ -348,19 +391,16 @@ describe('POST /api/fuel-prices/nearby', () => {
   // -------------------------------------------------------------------------
   // Radius filtering
   //
-  // The route clamps radius_km to a minimum of 1 km. Station distances from
-  // origin (51.5014, -0.1419) are:
+  // Station distances from origin (51.5014, -0.1419):
   //   station-a  ~0.10 km
   //   station-c  ~0.61 km
   //   station-b  ~1.20 km
   //
-  // A radius_km of 1.1 therefore includes A and C but excludes B.
+  // radius_km 1.1 → includes A and C, excludes B
   // -------------------------------------------------------------------------
 
   describe('radius filtering', () => {
-    beforeEach(() => {
-      setupFetchMock()
-    })
+    beforeEach(() => setupFetchMock())
 
     it('should exclude stations beyond the requested radius_km', async () => {
       const res = await request(app)
@@ -370,14 +410,12 @@ describe('POST /api/fuel-prices/nearby', () => {
         .expect(200)
 
       const ids = (res.body.stations as { id: string }[]).map((s) => s.id)
-      // station-b (~1.20 km) is beyond the 1.1 km radius and must be absent
       expect(ids).not.toContain('station-b')
-      // stations A and C are within 1.1 km and must be present
       expect(ids).toContain('station-a')
       expect(ids).toContain('station-c')
     })
 
-    it('should include all stations when radius_km is large enough to cover all', async () => {
+    it('should include all stations when radius_km is large enough', async () => {
       const res = await request(app)
         .post('/api/fuel-prices/nearby')
         .set('Authorization', `Bearer ${authToken}`)
@@ -392,26 +430,19 @@ describe('POST /api/fuel-prices/nearby', () => {
   })
 
   // -------------------------------------------------------------------------
-  // Graceful degradation — external service failures
+  // Graceful degradation
   // -------------------------------------------------------------------------
 
   describe('graceful degradation', () => {
-    it('should return 200 with empty stations and a note when the gov.uk feed is unavailable', async () => {
-      vi.stubGlobal(
-        'fetch',
-        vi.fn(async (url: string) => {
-          const urlStr = String(url)
-          if (urlStr.includes('postcodes.io')) {
-            // Unique postcode so geocode cache from other tests does not interfere
-            return mockJsonResponse({
-              status: 200,
-              result: { latitude: 51.5200, longitude: -0.1300, postcode: 'EC1A 1BB' },
-            })
-          }
-          // Simulate a bad gov.uk feed response
-          return mockJsonResponse({ error: 'Service unavailable' }, 503)
-        }),
-      )
+    it('should return 200 with empty stations and a note when the Fuel Finder API is unavailable', async () => {
+      setupFetchMock({
+        geocodeBody: {
+          status: 200,
+          result: { latitude: 51.52, longitude: -0.13, postcode: 'EC1A 1BB' },
+        },
+        stationsStatus: 503,
+        stationsBody: { error: 'Service unavailable' },
+      })
 
       const res = await request(app)
         .post('/api/fuel-prices/nearby')
@@ -426,18 +457,11 @@ describe('POST /api/fuel-prices/nearby', () => {
     })
 
     it('should return 400 when postcodes.io returns 404 for an unrecognised postcode', async () => {
-      vi.stubGlobal(
-        'fetch',
-        vi.fn(async (url: string) => {
-          const urlStr = String(url)
-          if (urlStr.includes('postcodes.io')) {
-            return mockJsonResponse({ status: 404, error: 'Postcode not found' }, 404)
-          }
-          return mockJsonResponse(MOCK_GOV_UK_FEED)
-        }),
-      )
+      setupFetchMock({
+        geocodeStatus: 404,
+        geocodeBody: { status: 404, error: 'Postcode not found' },
+      })
 
-      // ZZ99 9ZZ passes UK postcode format validation but postcodes.io is mocked to 404
       const res = await request(app)
         .post('/api/fuel-prices/nearby')
         .set('Authorization', `Bearer ${authToken}`)
@@ -452,15 +476,11 @@ describe('POST /api/fuel-prices/nearby', () => {
       vi.stubGlobal(
         'fetch',
         vi.fn(async (url: string) => {
-          const urlStr = String(url)
-          if (urlStr.includes('postcodes.io')) {
-            throw new Error('Network error')
-          }
-          return mockJsonResponse(MOCK_GOV_UK_FEED)
+          if (String(url).includes('postcodes.io')) throw new Error('Network error')
+          return mockJsonResponse(MOCK_TOKEN_RESPONSE)
         }),
       )
 
-      // Use a unique postcode to avoid the geocode cache
       const res = await request(app)
         .post('/api/fuel-prices/nearby')
         .set('Authorization', `Bearer ${authToken}`)
@@ -471,6 +491,22 @@ describe('POST /api/fuel-prices/nearby', () => {
       expect(res.body.stations).toHaveLength(0)
       expect(res.body).toHaveProperty('note')
     })
+
+    it('should return 200 with a credentials note when client credentials are not configured', async () => {
+      delete process.env.FUEL_FINDER_CLIENT_ID
+      delete process.env.FUEL_FINDER_CLIENT_SECRET
+
+      setupFetchMock()
+
+      const res = await request(app)
+        .post('/api/fuel-prices/nearby')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ postcode: 'SW1A 1AA', fuel_type: 'petrol', radius_km: 10 })
+        .expect(200)
+
+      expect(res.body.stations).toHaveLength(0)
+      expect(res.body.note).toMatch(/credentials/i)
+    })
   })
 
   // -------------------------------------------------------------------------
@@ -478,9 +514,7 @@ describe('POST /api/fuel-prices/nearby', () => {
   // -------------------------------------------------------------------------
 
   describe('diesel fuel type', () => {
-    beforeEach(() => {
-      setupFetchMock()
-    })
+    beforeEach(() => setupFetchMock())
 
     it('should return 200 and diesel prices when fuel_type is diesel', async () => {
       const res = await request(app)
@@ -491,8 +525,12 @@ describe('POST /api/fuel-prices/nearby', () => {
 
       expect(res.body).toHaveProperty('fuel_type', 'diesel')
       expect(Array.isArray(res.body.stations)).toBe(true)
-      // All three mock stations have B7 (diesel) prices
       expect(res.body.stations.length).toBeGreaterThan(0)
+
+      // All stations in mock data have B7 (diesel) prices
+      for (const s of res.body.stations as { price_pence_per_litre: number }[]) {
+        expect(s.price_pence_per_litre).toBeGreaterThan(0)
+      }
     })
   })
 
@@ -501,9 +539,7 @@ describe('POST /api/fuel-prices/nearby', () => {
   // -------------------------------------------------------------------------
 
   describe('response meta-fields', () => {
-    beforeEach(() => {
-      setupFetchMock()
-    })
+    beforeEach(() => setupFetchMock())
 
     it('should include fuel_type in the response body matching the requested type', async () => {
       const res = await request(app)
