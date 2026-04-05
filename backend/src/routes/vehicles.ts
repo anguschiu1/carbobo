@@ -10,12 +10,18 @@ const db = getDatabase()
 // All routes require authentication
 router.use(authenticateToken)
 
+const VEHICLE_COLUMNS = `
+  id, owner_user_id, vrm, make, model, year,
+  fuel_type_default, odometer_unit_default, tank_size_litres,
+  created_at, updated_at
+`
+
 // Get all vehicles for user
 router.get('/', (req: AuthRequest, res) => {
   try {
     const userId = req.userId!
     const vehicles = db
-      .prepare('SELECT * FROM vehicles WHERE owner_user_id = ? ORDER BY created_at DESC')
+      .prepare(`SELECT ${VEHICLE_COLUMNS} FROM vehicles WHERE owner_user_id = ? ORDER BY created_at DESC`)
       .all(userId) as Vehicle[]
 
     res.json({ vehicles })
@@ -32,7 +38,7 @@ router.get('/:id', (req: AuthRequest, res) => {
     const vehicleId = req.params.id
 
     const vehicle = db
-      .prepare('SELECT * FROM vehicles WHERE id = ? AND owner_user_id = ?')
+      .prepare(`SELECT ${VEHICLE_COLUMNS} FROM vehicles WHERE id = ? AND owner_user_id = ?`)
       .get(vehicleId, userId) as Vehicle | undefined
 
     if (!vehicle) {
@@ -57,6 +63,7 @@ router.post('/', (req: AuthRequest, res) => {
       year,
       fuel_type_default = 'petrol',
       odometer_unit_default = 'miles',
+      tank_size_litres,
     } = req.body
 
     if (!fuel_type_default || !odometer_unit_default) {
@@ -65,12 +72,13 @@ router.post('/', (req: AuthRequest, res) => {
 
     const vehicleId = uuidv4()
     const now = new Date().toISOString()
+    const tankSize = Number(tank_size_litres) > 0 ? Math.round(Number(tank_size_litres)) : 50
 
     db.prepare(
       `INSERT INTO vehicles (
         id, owner_user_id, vrm, make, model, year,
-        fuel_type_default, odometer_unit_default, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        fuel_type_default, odometer_unit_default, tank_size_litres, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       vehicleId,
       userId,
@@ -80,11 +88,12 @@ router.post('/', (req: AuthRequest, res) => {
       year || null,
       fuel_type_default,
       odometer_unit_default,
+      tankSize,
       now,
       now
     )
 
-    const vehicle = db.prepare('SELECT * FROM vehicles WHERE id = ?').get(vehicleId) as Vehicle
+    const vehicle = db.prepare(`SELECT ${VEHICLE_COLUMNS} FROM vehicles WHERE id = ?`).get(vehicleId) as Vehicle
 
     res.status(201).json({ vehicle })
   } catch (error) {
@@ -105,6 +114,7 @@ router.put('/:id', (req: AuthRequest, res) => {
       year,
       fuel_type_default,
       odometer_unit_default,
+      tank_size_litres,
     } = req.body
 
     // Verify ownership and get existing odometer unit
@@ -145,6 +155,11 @@ router.put('/:id', (req: AuthRequest, res) => {
       updates.push('odometer_unit_default = ?')
       values.push(odometer_unit_default)
     }
+    if (tank_size_litres !== undefined) {
+      const tankSize = Number(tank_size_litres) > 0 ? Math.round(Number(tank_size_litres)) : 50
+      updates.push('tank_size_litres = ?')
+      values.push(tankSize)
+    }
 
     if (updates.length === 0) {
       return res.status(400).json({ error: 'No fields to update' })
@@ -179,7 +194,7 @@ router.put('/:id', (req: AuthRequest, res) => {
       }
     }
 
-    const vehicle = db.prepare('SELECT * FROM vehicles WHERE id = ?').get(vehicleId) as Vehicle
+    const vehicle = db.prepare(`SELECT ${VEHICLE_COLUMNS} FROM vehicles WHERE id = ?`).get(vehicleId) as Vehicle
 
     res.json({ vehicle })
   } catch (error) {

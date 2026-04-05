@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import type { Request, Response as ExpressResponse, RequestInit } from 'express'
+import rateLimit from 'express-rate-limit'
 
 // Alias the Web Fetch API Response to avoid collision with Express Response
 type FetchResponse = Awaited<ReturnType<typeof fetch>>
@@ -404,6 +405,23 @@ async function fetchFuelFinderData(fuelKey: string): Promise<FuelFinderStation[]
 }
 
 // ---------------------------------------------------------------------------
+// Rate limiter
+// ---------------------------------------------------------------------------
+
+/**
+ * Rate limiter for the fuel-prices/nearby endpoint.
+ * Unauthenticated public route that calls two external APIs — limit to
+ * 30 requests per minute per IP to guard against abuse and API quota exhaustion.
+ */
+const fuelPricesLimiter = rateLimit({
+  windowMs: 60 * 1_000,   // 1 minute
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Please wait before searching again.' },
+})
+
+// ---------------------------------------------------------------------------
 // Route handler
 // ---------------------------------------------------------------------------
 
@@ -432,7 +450,7 @@ async function fetchFuelFinderData(fuelKey: string): Promise<FuelFinderStation[]
  * Requires env vars: FUEL_FINDER_CLIENT_ID, FUEL_FINDER_CLIENT_SECRET
  * Obtain credentials at: https://www.developer.fuel-finder.service.gov.uk/
  */
-router.post('/fuel-prices/nearby', async (req: Request, res: ExpressResponse) => {
+router.post('/fuel-prices/nearby', fuelPricesLimiter, async (req: Request, res: ExpressResponse) => {
   try {
     const { postcode, fuel_type = 'petrol', radius_km = 10 } = req.body as {
       postcode?: string
