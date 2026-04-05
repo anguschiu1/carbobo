@@ -129,6 +129,13 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_reminders_due_date ON reminders(due_date);
   `)
 
+  // Run migrations for existing databases
+  const columns = database.pragma('table_info(vehicles)') as { name: string }[]
+  if (!columns.some(c => c.name === 'tank_size_litres')) {
+    database.exec('ALTER TABLE vehicles ADD COLUMN tank_size_litres INTEGER NOT NULL DEFAULT 50')
+    console.log('Migration: added tank_size_litres column to vehicles')
+  }
+
   console.log('Database initialized successfully')
 }
 
