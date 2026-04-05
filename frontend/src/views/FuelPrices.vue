@@ -9,18 +9,70 @@
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div class="space-y-2">
             <Label for="postcode">Postcode</Label>
-            <Input
-              id="postcode"
-              v-model="searchForm.postcode"
-              placeholder="e.g., SW1A 1AA"
-              required
-            />
+            <!-- Postcode input + geolocation button row -->
+            <div class="flex gap-2">
+              <Input
+                id="postcode"
+                v-model="searchForm.postcode"
+                placeholder="e.g., SW1A 1AA"
+                required
+                class="flex-1"
+              />
+              <!-- Only render if the browser supports geolocation -->
+              <Button
+                v-if="geolocationSupported"
+                type="button"
+                variant="outline"
+                :disabled="geoLoading"
+                aria-label="Use my current location"
+                class="shrink-0 px-3"
+                @click="useMyLocation"
+              >
+                <!-- Spinner while locating -->
+                <svg
+                  v-if="geoLoading"
+                  class="animate-spin h-4 w-4 text-muted-foreground"
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                </svg>
+                <!-- Location pin icon when idle -->
+                <svg
+                  v-else
+                  xmlns="http://www.w3.org/2000/svg"
+                  class="h-4 w-4 text-muted-foreground"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                  aria-hidden="true"
+                >
+                  <path
+                    fill-rule="evenodd"
+                    d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z"
+                    clip-rule="evenodd"
+                  />
+                </svg>
+              </Button>
+            </div>
+            <!-- Inline error for geolocation failures -->
+            <p
+              v-if="geoError"
+              class="text-xs text-destructive mt-1"
+              role="alert"
+            >
+              {{ geoError }}
+            </p>
           </div>
           <div class="space-y-2">
             <Label for="fuel_type">Fuel Type</Label>
             <Select id="fuel_type" v-model="searchForm.fuel_type">
               <option value="petrol">Petrol</option>
               <option value="diesel">Diesel</option>
+              <option value="super-unleaded">Super Unleaded</option>
+              <option value="super-diesel">Super Diesel</option>
             </Select>
           </div>
           <div class="space-y-2">
@@ -134,9 +186,9 @@
               <p class="text-2xl font-bold leading-none">
                 {{ station.price_pence_per_litre.toFixed(1) }}p/L
               </p>
-              <!-- Per-tank estimate (50 L) -->
+              <!-- Per-tank estimate using vehicle tank size (falls back to 50 L) -->
               <p class="text-xs text-muted-foreground mt-1">
-                ~£{{ perTankCost(station.price_pence_per_litre) }} per tank
+                ~£{{ perTankCost(station.price_pence_per_litre) }} per tank ({{ tankSize }}L)
               </p>
               <!-- Last updated with staleness warning -->
               <p class="text-xs text-muted-foreground mt-1 flex items-center justify-end gap-1">
@@ -195,7 +247,7 @@
 
 <script setup lang="ts">
 // Page: Fuel Prices — let users search for nearby fuel prices by postcode
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { format, differenceInHours, isValid } from 'date-fns'
 import axios from 'axios'
 import apiClient from '@/api/client'
@@ -206,6 +258,13 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import type { FuelType } from '@carbobo/shared'
+
+/** Local extension of Vehicle to accommodate the upcoming tank_size_litres field
+ *  that backend-dev is adding to shared/src/types/index.ts. Once the shared type
+ *  is updated this cast can be removed. */
+interface VehicleWithTankSize {
+  tank_size_litres?: number
+}
 
 interface FuelStation {
   id: string
@@ -218,6 +277,8 @@ interface FuelStation {
   distance_km: number
 }
 
+const LAST_POSTCODE_KEY = 'carbobo:last_postcode'
+
 const vehicleStore = useVehiclesStore()
 
 const loading = ref(false)
@@ -229,6 +290,11 @@ const searched = ref(false)
 const stations = ref<FuelStation[]>([])
 const lastSearchPostcode = ref('')
 
+// Geolocation state
+const geolocationSupported = ref(typeof navigator !== 'undefined' && 'geolocation' in navigator)
+const geoLoading = ref(false)
+const geoError = ref('')
+
 const searchForm = ref<{
   postcode: string
   fuel_type: string
@@ -237,6 +303,15 @@ const searchForm = ref<{
   postcode: '',
   fuel_type: 'petrol',
   radius_km: 10,
+})
+
+/**
+ * Computed tank size in litres, using the current vehicle's tank_size_litres if available.
+ * Falls back to 50 L as a sensible UK average until the backend field is populated.
+ */
+const tankSize = computed<number>(() => {
+  const vehicle = vehicleStore.currentVehicle as (typeof vehicleStore.currentVehicle & VehicleWithTankSize) | null
+  return vehicle?.tank_size_litres ?? 50
 })
 
 /**
@@ -260,11 +335,12 @@ function mapVehicleFuelType(fuelType: FuelType): 'petrol' | 'diesel' | null {
 }
 
 /**
- * Calculates an estimated cost for a 50 L full tank fill at the given price.
+ * Calculates an estimated cost for a full tank fill at the given price.
+ * Uses the current vehicle's tank_size_litres or falls back to 50 L.
  * Returns a string formatted to 2 decimal places (e.g. "72.95").
  */
 function perTankCost(pricePencePerLitre: number): string {
-  return ((pricePencePerLitre * 50) / 100).toFixed(2)
+  return ((pricePencePerLitre * tankSize.value) / 100).toFixed(2)
 }
 
 /**
@@ -287,13 +363,62 @@ function isPriceStale(lastUpdated: string): boolean {
   return isValid(d) && differenceInHours(new Date(), d) > 2
 }
 
+/**
+ * Uses the browser Geolocation API to get the user's coordinates, then
+ * reverse-geocodes to the nearest UK postcode via postcodes.io.
+ * On success, populates searchForm.postcode.
+ * Uses fetch (not the authenticated Axios instance) to avoid sending the Bearer token.
+ */
+async function useMyLocation(): Promise<void> {
+  geoError.value = ''
+  geoLoading.value = true
+
+  try {
+    const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(resolve, reject, {
+        timeout: 10000,
+        maximumAge: 60000,
+      })
+    })
+
+    const { latitude: lat, longitude: lon } = position.coords
+
+    const response = await fetch(
+      `https://api.postcodes.io/postcodes?lon=${lon}&lat=${lat}&limit=1`
+    )
+
+    if (!response.ok) {
+      throw new Error('Postcode lookup failed')
+    }
+
+    const data: { result: Array<{ postcode: string }> | null } = await response.json()
+
+    if (data.result && data.result.length > 0) {
+      searchForm.value.postcode = data.result[0].postcode
+    } else {
+      geoError.value = 'Location unavailable'
+    }
+  } catch {
+    geoError.value = 'Location unavailable'
+  } finally {
+    geoLoading.value = false
+  }
+}
+
 onMounted(() => {
+  // Pre-fill fuel type from the current vehicle (before localStorage check so postcode wins)
   const vehicle = vehicleStore.currentVehicle
   if (vehicle) {
     const mapped = mapVehicleFuelType(vehicle.fuel_type_default)
     if (mapped !== null) {
       searchForm.value.fuel_type = mapped
     }
+  }
+
+  // Pre-fill postcode from localStorage — takes precedence over any other default
+  const savedPostcode = localStorage.getItem(LAST_POSTCODE_KEY)
+  if (savedPostcode) {
+    searchForm.value.postcode = savedPostcode
   }
 })
 
@@ -312,6 +437,9 @@ async function handleSearch() {
 
     stations.value = response.data.stations || []
     lastSearchPostcode.value = response.data.postcode || searchForm.value.postcode
+
+    // Persist a successful postcode search to localStorage for next visit
+    localStorage.setItem(LAST_POSTCODE_KEY, searchForm.value.postcode.toUpperCase().trim())
 
     // Treat notes as informational, not errors — displayed as amber banners
     if (response.data.note) {
