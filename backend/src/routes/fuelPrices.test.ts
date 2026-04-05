@@ -561,4 +561,50 @@ describe('POST /api/fuel-prices/nearby', () => {
       expect(res.body.fuel_type).toBe('petrol')
     })
   })
+
+  // -------------------------------------------------------------------------
+  // Rate limiting
+  // -------------------------------------------------------------------------
+
+  describe('rate limiting', () => {
+    it('should include RateLimit standard headers on a normal 200 response', async () => {
+      setupFetchMock()
+
+      const res = await request(app)
+        .post('/api/fuel-prices/nearby')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ postcode: 'SW1A 1AA', fuel_type: 'petrol', radius_km: 10 })
+        .expect(200)
+
+      // express-rate-limit with standardHeaders: true emits RateLimit-* headers
+      expect(res.headers).toHaveProperty('ratelimit-limit')
+      expect(res.headers).toHaveProperty('ratelimit-remaining')
+      expect(Number(res.headers['ratelimit-limit'])).toBe(30)
+      expect(Number(res.headers['ratelimit-remaining'])).toBeGreaterThanOrEqual(0)
+    })
+
+    it('should return 429 with a descriptive error message after 30 requests are exhausted', async () => {
+      setupFetchMock()
+
+      const payload = { postcode: 'SW1A 1AA', fuel_type: 'petrol', radius_km: 10 }
+
+      // Fire 30 requests to exhaust the window
+      for (let i = 0; i < 30; i++) {
+        await request(app)
+          .post('/api/fuel-prices/nearby')
+          .set('Authorization', `Bearer ${authToken}`)
+          .send(payload)
+      }
+
+      // The 31st request must be rate-limited
+      const res = await request(app)
+        .post('/api/fuel-prices/nearby')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send(payload)
+        .expect(429)
+
+      expect(res.body).toHaveProperty('error')
+      expect(res.body.error).toMatch(/too many requests/i)
+    })
+  })
 })
