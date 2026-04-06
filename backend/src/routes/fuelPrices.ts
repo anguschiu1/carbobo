@@ -225,33 +225,38 @@ async function getAccessToken(): Promise<string | null> {
 
   tokenInFlight = (async () => {
     try {
+      const params = new URLSearchParams()
+      params.set('client_id', clientId)
+      params.set('client_secret', clientSecret)
+      params.set('grant_type', 'client_credentials')
+
       const res = await fetchWithTimeout(
         `${FUEL_FINDER_BASE_URL}${TOKEN_PATH}`,
         FETCH_TIMEOUT_MS,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-          body: JSON.stringify({
-            client_id: clientId,
-            client_secret: clientSecret,
-            grant_type: 'client_credentials',
-          }),
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+          body: params.toString(),
         } as RequestInit,
       )
 
+      const rawBody = await res.text()
+
       if (!res.ok) {
-        console.error(`[fuelPrices] OAuth token request failed: HTTP ${res.status}`)
+        console.error(`[fuelPrices] OAuth token request failed: HTTP ${res.status} — ${rawBody}`)
         return null
       }
 
-      const body = await res.json() as {
-        access_token?: string
-        expires_in?: number
-        token_type?: string
+      let body: { access_token?: string; expires_in?: number; token_type?: string }
+      try {
+        body = JSON.parse(rawBody)
+      } catch {
+        console.error('[fuelPrices] OAuth response is not valid JSON:', rawBody)
+        return null
       }
 
       if (!body.access_token) {
-        console.error('[fuelPrices] OAuth response missing access_token')
+        console.error('[fuelPrices] OAuth response missing access_token:', rawBody)
         return null
       }
 
