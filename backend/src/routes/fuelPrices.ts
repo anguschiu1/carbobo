@@ -247,7 +247,7 @@ async function getAccessToken(): Promise<string | null> {
         return null
       }
 
-      let body: { access_token?: string; expires_in?: number; token_type?: string }
+      let body: { success?: boolean; data?: { access_token?: string; expires_in?: number; token_type?: string } }
       try {
         body = JSON.parse(rawBody)
       } catch {
@@ -255,13 +255,14 @@ async function getAccessToken(): Promise<string | null> {
         return null
       }
 
-      if (!body.access_token) {
+      const tokenData = body.data
+      if (!tokenData?.access_token) {
         console.error('[fuelPrices] OAuth response missing access_token:', rawBody)
         return null
       }
 
-      const expiresInMs = (body.expires_in ?? 3600) * 1000
-      cachedToken = { token: body.access_token, expiresAt: Date.now() + expiresInMs }
+      const expiresInMs = (tokenData.expires_in ?? 3600) * 1000
+      cachedToken = { token: tokenData.access_token, expiresAt: Date.now() + expiresInMs }
       return cachedToken.token
     } catch (err) {
       console.error('[fuelPrices] OAuth token fetch error:', err)
