@@ -41,9 +41,13 @@ const MOCK_GEOCODE_RESULT = {
 }
 
 const MOCK_TOKEN_RESPONSE = {
-  access_token: 'mock-bearer-token',
-  expires_in: 3600,
-  token_type: 'Bearer',
+  success: true,
+  data: {
+    access_token: 'mock-bearer-token',
+    expires_in: 3600,
+    token_type: 'Bearer',
+  },
+  message: 'Operation successful',
 }
 
 /**
