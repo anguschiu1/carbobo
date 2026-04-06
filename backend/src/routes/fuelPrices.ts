@@ -367,7 +367,13 @@ async function fetchFuelFinderData(fuelKey: string): Promise<FuelFinderStation[]
     }
 
     if (!stationsRes.ok || !pricesRes.ok) {
-      console.error(`[fuelPrices] Fuel Finder API returned HTTP ${stationsRes.status} / ${pricesRes.status}`)
+      const stationsBody = !stationsRes.ok ? await stationsRes.text().catch(() => '(unreadable)') : 'ok'
+      const pricesBody   = !pricesRes.ok   ? await pricesRes.text().catch(() => '(unreadable)')   : 'ok'
+      console.error(
+        `[fuelPrices] Fuel Finder API returned HTTP ${stationsRes.status} / ${pricesRes.status}`,
+        `\n  stations body: ${stationsBody}`,
+        `\n  prices body:   ${pricesBody}`,
+      )
       return null
     }
 
